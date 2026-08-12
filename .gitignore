@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.svelte-kit/
+*.tsbuildinfo
+.wrangler/
+.DS_Store
+coverage/

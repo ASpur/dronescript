@@ -1,0 +1,16 @@
+{
+  "name": "@dronescript/compiler",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "description": "DroneScript compiler core: C-like source to PneumaticCraft v3 program JSON",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  }
+}

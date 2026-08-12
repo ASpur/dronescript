@@ -1,0 +1,23 @@
+{
+  "name": "dronescript",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A C-like compiler targeting PneumaticCraft: Repressurized drone programs",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspace packages/compiler",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "dev": "npm run dev --workspace packages/web"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  },
+  "allowScripts": {
+    "esbuild@0.21.5": true
+  }
+}
