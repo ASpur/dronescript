@@ -82,10 +82,14 @@ export function area(
   const fields: Record<string, unknown> = { area_type: areaType };
   if (typeof pos1 === "string") fields["var1"] = pos1;
   else fields["pos1"] = pos1;
-  if (pos2 !== undefined) {
-    if (typeof pos2 === "string") fields["var2"] = pos2;
-    else fields["pos2"] = pos2;
-  }
+  // A one-point area still has to name its second point. The 1.20.4 reader is
+  // `NbtUtils.readBlockPos(tag.getCompound("pos2"))`, and a missing key yields
+  // an empty compound whose X/Y/Z read as 0 — so an omitted pos2 is (0,0,0),
+  // not "unset", and the area stretches from the intended block to the world
+  // origin. (The 1.21 codec uses optionalFieldOf and is unaffected.)
+  const second = pos2 ?? pos1;
+  if (typeof second === "string") fields["var2"] = second;
+  else fields["pos2"] = second;
   return { type: "area", fields };
 }
 

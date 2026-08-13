@@ -94,7 +94,15 @@ export class ConstEvaluator {
     if (!this.applyAreaPosition(fields, first, 1)) return undefined;
 
     const second = call.args[1];
-    if (second && !this.applyAreaPosition(fields, second, 2)) return undefined;
+    if (second) {
+      if (!this.applyAreaPosition(fields, second, 2)) return undefined;
+    } else {
+      // A one-point area names the same point twice: an omitted pos2 reads back
+      // as (0,0,0) on 1.20.4, not as "unset", which would stretch the area to
+      // the world origin. See the note on `area()` in emit/model.ts.
+      if (fields["pos1"] !== undefined) fields["pos2"] = fields["pos1"];
+      if (fields["var1"] !== undefined) fields["var2"] = fields["var1"];
+    }
 
     fields["area_type"] = this.evalAreaType(call);
     return { kind: "area", chain: [{ type: "area", fields }] };

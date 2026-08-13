@@ -73,6 +73,26 @@ describe("1.20.4 target", () => {
     expect(area["type"]).toEqual({ type: 8, value: "box" });
   });
 
+  it("names both corners of a one-point area, however it is written", () => {
+    // A missing pos2 is not "unset" on this version: readFromNBT runs
+    // NbtUtils.readBlockPos(tag.getCompound("pos2")), and the empty compound
+    // reads its X/Y/Z back as 0. So an omitted second corner puts the area's far
+    // end at the world origin, and the drone dies with "Area too large".
+    const area = (source: string) =>
+      widgets(ok(source)).find((w) => w["name"].value === "area")!;
+
+    const literal = area(`goto(area(<1, 64, -3>));`);
+    expect(literal["pos2"]).toEqual(literal["pos1"]);
+
+    const bare = area(`goto(<1, 64, -3>);`);
+    expect(bare["pos2"]).toEqual(bare["pos1"]);
+
+    // Variable corners have the same problem: var2 left empty falls back to pos2.
+    const variable = area(`goto($owner_pos);`);
+    expect(variable["var1"]).toEqual({ type: 8, value: "$owner_pos" });
+    expect(variable["var2"]).toEqual({ type: 8, value: "$owner_pos" });
+  });
+
   it("flattens the grouped fields the newer format nests", () => {
     const result = ok(`
       const chest = area(<0, 64, 0>);

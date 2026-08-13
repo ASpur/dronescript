@@ -1126,8 +1126,16 @@ export class Lowerer {
     }
     const value = this.constEvaluator().eval(expr);
     if (value?.kind === "area") return value.chain.map(cloneNode);
+    // Both points are named even though these are single blocks: an omitted
+    // pos2/var2 reads back as (0,0,0) on 1.20.4 rather than as "unset", which
+    // would stretch the area to the world origin. See `area()` in emit/model.ts.
     if (value?.kind === "coord") {
-      return [{ type: "area", fields: { pos1: value.value, area_type: { type: "box" } } }];
+      return [
+        {
+          type: "area",
+          fields: { pos1: value.value, pos2: value.value, area_type: { type: "box" } },
+        },
+      ];
     }
     // A runtime coordinate variable becomes a single-block area.
     if (expr.kind === "ident") {
@@ -1135,7 +1143,16 @@ export class Lowerer {
       if (scope !== "local" || this.lookupVar(expr.name)) {
         const info = this.resolveVariable(expr);
         if (info) {
-          return [{ type: "area", fields: { var1: info.runtimeName, area_type: { type: "box" } } }];
+          return [
+            {
+              type: "area",
+              fields: {
+                var1: info.runtimeName,
+                var2: info.runtimeName,
+                area_type: { type: "box" },
+              },
+            },
+          ];
         }
       }
     }
