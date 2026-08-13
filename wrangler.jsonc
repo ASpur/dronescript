@@ -2,7 +2,13 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "dronescript",
   "compatibility_date": "2026-01-01",
-  // Cloudflare Pages serves the Vite build output as a static site; there is no
-  // server side, since the compiler runs entirely in the browser.
-  "pages_build_output_dir": "packages/web/dist"
+  // Workers static assets serve the Vite build output; there is no server side,
+  // since the compiler runs entirely in the browser. Pages would do just as
+  // well, but Workers Builds only issues its pipeline a Workers-scoped token,
+  // so a `wrangler pages deploy` from CI fails authentication.
+  "assets": {
+    "directory": "packages/web/dist",
+    // One page, no router: anything unrecognised should still land on the editor.
+    "not_found_handling": "single-page-application"
+  }
 }
