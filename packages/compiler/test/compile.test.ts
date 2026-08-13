@@ -200,6 +200,15 @@ describe("conditions", () => {
     expect(condition["axis_options"]).toEqual({ axes: 0b010 });
   });
 
+  it("spends no widget on a comparison of two constants", () => {
+    const result = ok(`
+      if (2 > 1) { wait(5); } else { wait(99); }
+    `);
+    expect(types(result)).toEqual(["start", "wait", "text"]);
+    const text = result.placed!.find((p) => p.type === "text")!;
+    expect(text.fields["string"]).toBe("5");
+  });
+
   it("measures a sensor into a variable when used as a value", () => {
     const result = ok(`
       int n;
@@ -270,15 +279,32 @@ describe("loops", () => {
 });
 
 describe("functions", () => {
-  it("compiles a call to a label and jump_sub", () => {
+  it("inlines a function called once, which is always cheaper", () => {
+    // A subroutine costs a label, its text, a jump_sub and its text — four
+    // widgets that a single call site does not need.
     const result = ok(`
       void park() {
         goto(area(<0, 64, 0>));
       }
       park();
     `);
+    expect(types(result)).toEqual(["start", "goto", "area"]);
+  });
+
+  it("keeps a function called more than once as a subroutine", () => {
+    const result = ok(`
+      void park() {
+        goto(area(<0, 64, 0>));
+      }
+      park();
+      wait(20);
+      park();
+    `);
     expect(types(result)).toContain("jump_sub");
     expect(types(result)).toContain("label");
+    // One shared body, reached from both call sites.
+    expect(result.placed!.filter((p) => p.type === "goto")).toHaveLength(1);
+    expect(result.placed!.filter((p) => p.type === "jump_sub")).toHaveLength(2);
   });
 
   it("passes arguments through per-function variables", () => {

@@ -84,6 +84,8 @@ export class Lowerer {
   private tempCounter = 0;
   private shadowCounter = 0;
   private currentFunctionName = "<main>";
+  private readonly callCounts = new Map<string, number>();
+  private readonly inlining: string[] = [];
 
   constructor(private readonly diagnostics: DiagnosticBag) {}
 
@@ -96,6 +98,7 @@ export class Lowerer {
         this.functions.set(item.name, item);
       }
     }
+    countCalls(file, this.callCounts);
 
     const entry = this.builder.create();
     this.current = entry;
@@ -639,7 +642,6 @@ export class Lowerer {
 
   private lowerUserCall(name: string, decl: FuncDecl, call: Call): void {
     this.noteCall(name);
-    this.emittedFunctions.add(name);
 
     if (call.args.length !== decl.params.length) {
       this.diagnostics.error(
@@ -656,8 +658,61 @@ export class Lowerer {
       this.assignTo({ type: param.type, runtimeName: argVar(name, i) }, arg, arg.span);
     });
 
+    if (this.shouldInline(name)) {
+      this.inlineCall(name, decl);
+      return;
+    }
+
+    this.emittedFunctions.add(name);
     const cont = this.builder.create();
     this.current.terminator = { kind: "call", target: functionLabel(name), cont: cont.id };
+    this.startBlock(cont);
+  }
+
+  /**
+   * Keeping a function as a subroutine costs a label, its text, and a jump-sub
+   * plus its text at each call — four widgets when it is called once, which
+   * inlining removes outright. With two or more calls the subroutine usually
+   * wins, so only the unambiguous case is taken.
+   */
+  private shouldInline(name: string): boolean {
+    if ((this.callCounts.get(name) ?? 0) !== 1) return false;
+    // A cycle would inline forever. It is an error anyway, reported below.
+    return !this.inlining.includes(name);
+  }
+
+  private inlineCall(name: string, decl: FuncDecl): void {
+    const cont = this.builder.create();
+
+    const savedScope = this.scope;
+    const savedFn = this.fn;
+    const savedLoop = this.loop;
+    const savedName = this.currentFunctionName;
+
+    this.inlining.push(name);
+    this.currentFunctionName = name;
+    // The body sees top-level declarations and its own parameters, not the
+    // caller's locals — the same scope it would have as a subroutine.
+    this.scope = { vars: new Map(), consts: new Map(), parent: this.rootScope };
+    this.loop = undefined;
+    this.fn = {
+      name,
+      returnVar: decl.returns === "void" ? undefined : returnVar(name),
+      exit: cont.id,
+    };
+    decl.params.forEach((param, i) => {
+      this.scope.vars.set(param.name, { type: param.type, runtimeName: argVar(name, i) });
+    });
+
+    for (const stmt of decl.body.body) this.lowerStatement(stmt);
+    this.current.terminator = { kind: "jump", to: cont.id };
+
+    this.inlining.pop();
+    this.scope = savedScope;
+    this.fn = savedFn;
+    this.loop = savedLoop;
+    this.currentFunctionName = savedName;
+
     this.startBlock(cont);
   }
 
@@ -820,6 +875,16 @@ export class Lowerer {
     ifFalse: BlockId,
     span: Span,
   ): void {
+    // A comparison of two constants needs no widget at all.
+    const leftValue = this.constEvaluator().evalInt(left);
+    const rightValue = this.constEvaluator().evalInt(right);
+    if (leftValue !== undefined && rightValue !== undefined) {
+      const holds = evaluateComparison(op, leftValue, rightValue);
+      this.current.terminator = { kind: "jump", to: holds ? ifTrue : ifFalse };
+      this.startBlock(this.builder.create());
+      return;
+    }
+
     // The game offers only =, >= and <=. The rest are those three with the
     // branch targets swapped, which costs nothing.
     const { raw, swap } = normalizeComparison(op);
@@ -1225,6 +1290,25 @@ function normalizeComparison(op: string): { raw: RawOperator; swap: boolean } {
   }
 }
 
+function evaluateComparison(op: string, a: number, b: number): boolean {
+  switch (op) {
+    case "==":
+      return a === b;
+    case "!=":
+      return a !== b;
+    case "<":
+      return a < b;
+    case "<=":
+      return a <= b;
+    case ">":
+      return a > b;
+    case ">=":
+      return a >= b;
+    default:
+      throw new Error(`not a comparison: ${op}`);
+  }
+}
+
 function axisIndex(name: string): number | undefined {
   return name === "x" ? 0 : name === "y" ? 1 : name === "z" ? 2 : undefined;
 }
@@ -1243,6 +1327,98 @@ function setPath(target: Record<string, unknown>, path: readonly string[], value
     node = node[key] as Record<string, unknown>;
   }
   node[path[path.length - 1]!] = value;
+}
+
+/**
+ * Count call sites per name across the whole file, so the lowering can tell a
+ * function called once from one called repeatedly before it emits either.
+ */
+function countCalls(file: SourceFile, into: Map<string, number>): void {
+  const visitExpr = (expr: Expr): void => {
+    switch (expr.kind) {
+      case "call": {
+        const name = calleeName(expr);
+        if (name) into.set(name, (into.get(name) ?? 0) + 1);
+        visitExpr(expr.callee);
+        expr.args.forEach(visitExpr);
+        expr.options?.properties.forEach((p) => visitExpr(p.value));
+        return;
+      }
+      case "binary":
+        visitExpr(expr.left);
+        visitExpr(expr.right);
+        return;
+      case "unary":
+        visitExpr(expr.operand);
+        return;
+      case "member":
+        visitExpr(expr.target);
+        return;
+      case "coord":
+        visitExpr(expr.x);
+        visitExpr(expr.y);
+        visitExpr(expr.z);
+        return;
+      case "list":
+        expr.items.forEach(visitExpr);
+        return;
+      case "object":
+        expr.properties.forEach((p) => visitExpr(p.value));
+        return;
+      default:
+        return;
+    }
+  };
+
+  const visitStmt = (stmt: Stmt): void => {
+    switch (stmt.kind) {
+      case "block":
+        stmt.body.forEach(visitStmt);
+        return;
+      case "var":
+        if (stmt.init) visitExpr(stmt.init);
+        return;
+      case "const":
+        visitExpr(stmt.value);
+        return;
+      case "assign":
+        visitExpr(stmt.target);
+        visitExpr(stmt.value);
+        return;
+      case "exprStmt":
+        visitExpr(stmt.expr);
+        return;
+      case "if":
+        visitExpr(stmt.condition);
+        visitStmt(stmt.then);
+        if (stmt.otherwise) visitStmt(stmt.otherwise);
+        return;
+      case "while":
+        visitExpr(stmt.condition);
+        visitStmt(stmt.body);
+        return;
+      case "for":
+        if (stmt.init) visitStmt(stmt.init);
+        if (stmt.condition) visitExpr(stmt.condition);
+        if (stmt.step) visitStmt(stmt.step);
+        visitStmt(stmt.body);
+        return;
+      case "foreach":
+        visitExpr(stmt.iterable);
+        visitStmt(stmt.body);
+        return;
+      case "return":
+        if (stmt.value) visitExpr(stmt.value);
+        return;
+      default:
+        return;
+    }
+  };
+
+  for (const item of file.body) {
+    if (item.kind === "func") item.body.body.forEach(visitStmt);
+    else visitStmt(item);
+  }
 }
 
 export function functionLabel(name: string): string {
