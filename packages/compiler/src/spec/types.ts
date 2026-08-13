@@ -82,6 +82,10 @@ export interface WidgetSpec {
   readonly returnType?: ParamType;
   /** `freeToUse()` — only `comment` costs no Programming Puzzle piece. */
   readonly free?: boolean;
+  /** `getWidth()` override, in GUI units. Defaults to `PROGWIDGET_WIDTH`. */
+  readonly width?: number;
+  /** `getHeight()` override, in GUI units. Defaults to 22 per parameter row. */
+  readonly height?: number;
   /**
    * Condition widgets branch on their LAST parameter row: the whitelist-side text
    * is the jump target when true, the blacklist-side text when false. An empty

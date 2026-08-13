@@ -8,7 +8,7 @@
  * hold the relinked result against it.
  */
 
-import { PARAM_X_STEP, getWidget, widgetHeight } from "../spec/widgets.js";
+import { PARAM_X_STEP, getWidget, widgetHeight, widgetWidth } from "../spec/widgets.js";
 import type { Chain, PlacedWidget, Program, WidgetNode } from "../emit/model.js";
 import { leftExtent, rightExtent } from "./geometry.js";
 
@@ -105,8 +105,11 @@ class Placer {
             `${node.type} row ${row} expects a ${expected} parameter, got ${child.type}`,
           );
         }
-        // Each link hangs off the previous one's own slot 0, i.e. +15 per step.
-        placedIndices.push(this.place(child, x + PARAM_X_STEP * (depth + 1), rowY));
+        // The first hop is the owner's own width; each later link hangs off the
+        // previous parameter widget's slot 0, which is always 15 wide.
+        placedIndices.push(
+          this.place(child, x + widgetWidth(spec) + PARAM_X_STEP * depth, rowY),
+        );
       }
       self.params[row]!.push(...placedIndices);
       this.linkChainElements(placedIndices);

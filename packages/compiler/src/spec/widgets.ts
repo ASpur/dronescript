@@ -155,6 +155,8 @@ export const WIDGETS: readonly WidgetSpec[] = [
     hasStepInput: false,
     hasStepOutput: false,
     free: true, // the only widget costing no puzzle piece
+    width: 40, // getWidth() = super + 10
+    height: 32, // getHeight() = super + 10
   },
   {
     id: "start",
@@ -526,6 +528,7 @@ export const WIDGETS: readonly WidgetSpec[] = [
     fields: [],
     hasStepInput: true,
     hasStepOutput: false,
+    width: 40,
   },
   {
     id: "external_program",
@@ -925,7 +928,17 @@ export function getAreaType(id: string): AreaTypeSpec {
  * from a widget's origin to the one it connects to below.
  */
 export function widgetHeight(spec: WidgetSpec): number {
-  return PARAM_Y_STEP * Math.max(1, spec.params.length);
+  const gui = spec.height ?? PROGWIDGET_HEIGHT * Math.max(1, spec.params.length);
+  return gui / 2;
+}
+
+/**
+ * Horizontal extent in program coordinates: `getWidth() / 2`. This is the offset
+ * to a widget's own whitelist parameter column — note it uses the *owner's*
+ * width, so a wider widget reaches further right.
+ */
+export function widgetWidth(spec: WidgetSpec): number {
+  return (spec.width ?? PROGWIDGET_WIDTH) / 2;
 }
 
 /** Encode a set of directions as the byte bitmask the mod expects. */

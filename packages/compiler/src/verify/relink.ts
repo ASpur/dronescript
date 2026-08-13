@@ -7,7 +7,13 @@
  * two widgets accidentally landed on connecting coordinates.
  */
 
-import { PARAM_X_STEP, PARAM_Y_STEP, getWidget, widgetHeight } from "../spec/widgets.js";
+import {
+  PARAM_X_STEP,
+  PARAM_Y_STEP,
+  getWidget,
+  widgetHeight,
+  widgetWidth,
+} from "../spec/widgets.js";
 import type { PlacedWidget } from "../emit/model.js";
 import { key } from "../layout/geometry.js";
 
@@ -59,8 +65,9 @@ export function relink(placed: readonly PlacedWidget[]): LinkedProgram {
   for (const w of widgets) {
     const spec = getWidget(w.placed.type);
     for (let row = 0; row < spec.params.length; row++) {
+      // rightParam uses the *owner's* width, so a wider widget reaches further.
       const at = byPosition.get(
-        key(w.placed.x + PARAM_X_STEP, w.placed.y + PARAM_Y_STEP * row),
+        key(w.placed.x + widgetWidth(spec), w.placed.y + PARAM_Y_STEP * row),
       );
       if (at === undefined) continue;
       const found = widgets[at]!;
