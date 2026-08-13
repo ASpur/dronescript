@@ -8,18 +8,32 @@
 // The editor core only: none of Monaco's bundled languages are wanted here, and
 // importing the default entry point pulls in every one of them.
 import * as monaco from "monaco-editor/esm/vs/editor/editor.api";
-import { AREA_TYPES, BUILTINS, DIRECTIONS, KEYWORDS } from "@dronescript/compiler";
-import type { BuiltinSpec } from "@dronescript/compiler";
+import { BUILTINS, KEYWORDS } from "@dronescript/compiler";
+import {
+  documentationFor,
+  PSEUDO_FUNCTIONS,
+  signatureOf,
+  SPECIAL_VARIABLE_DOCS,
+} from "./reference.js";
 
 export const LANGUAGE_ID = "dronescript";
 
-const SPECIAL_VARIABLES = [
-  "$drone_pos",
-  "$controller_pos",
-  "$owner_pos",
-  "$deploy_pos",
-  "$owner_look",
-];
+const SPECIAL_VARIABLES = SPECIAL_VARIABLE_DOCS.filter((d) => !d.legacy && !d.prefix).map(
+  (d) => d.name,
+);
+
+/** Names that have a reference-sheet entry to Ctrl+click through to. */
+const LINKABLE = new Set([
+  ...BUILTINS.map((b) => b.name),
+  ...PSEUDO_FUNCTIONS.map((p) => p.name),
+]);
+
+let referenceOpener: ((name: string) => void) | undefined;
+
+/** Wire Ctrl+click on a function name to the reference sheet. */
+export function setReferenceOpener(open: (name: string) => void): void {
+  referenceOpener = open;
+}
 
 export function registerLanguage(): void {
   if (monaco.languages.getLanguages().some((l) => l.id === LANGUAGE_ID)) return;
@@ -133,6 +147,36 @@ export function registerLanguage(): void {
     },
   });
 
+  // Function names become links, so Ctrl+click (the "go to definition" gesture)
+  // jumps to the function's entry in the reference sheet.
+  monaco.languages.registerLinkProvider(LANGUAGE_ID, {
+    provideLinks(model) {
+      const links: monaco.languages.ILink[] = [];
+      const pattern = /\b[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)?(?=\s*\()/g;
+      model.getLinesContent().forEach((line, i) => {
+        for (const match of line.matchAll(pattern)) {
+          const name = match[0];
+          if (!LINKABLE.has(name)) continue;
+          links.push({
+            range: new monaco.Range(i + 1, match.index + 1, i + 1, match.index + 1 + name.length),
+            url: monaco.Uri.from({ scheme: "dronescript", path: `/reference/${name}` }),
+            tooltip: "Show in reference",
+          });
+        }
+      });
+      return { links };
+    },
+  });
+
+  monaco.editor.registerLinkOpener({
+    open(resource) {
+      if (resource.scheme !== "dronescript") return false;
+      const name = resource.path.split("/").pop();
+      if (name) referenceOpener?.(decodeURIComponent(name));
+      return true;
+    },
+  });
+
   monaco.languages.registerHoverProvider(LANGUAGE_ID, {
     provideHover(model, position) {
       const word = model.getWordAtPosition(position);
@@ -150,48 +194,3 @@ export function registerLanguage(): void {
     },
   });
 }
-
-function signatureOf(builtin: BuiltinSpec): string {
-  const positional = builtin.params
-    .filter((p) => p.from.kind === "arg" && p.side === "whitelist")
-    .map((p) => p.type);
-  return `${builtin.name}(${positional.join(", ")}${positional.length > 0 ? ", " : ""}{options})`;
-}
-
-function documentationFor(builtin: BuiltinSpec): string {
-  const lines = [builtin.summary, ""];
-
-  const optionParams = builtin.params.filter((p) => p.from.kind === "option");
-  if (optionParams.length > 0) {
-    lines.push("**Parameters**");
-    for (const p of optionParams) {
-      if (p.from.kind !== "option") continue;
-      lines.push(`- \`${p.from.name}\` — ${p.type.replace("_", " ")}`);
-    }
-    lines.push("");
-  }
-
-  if (builtin.fields.length > 0) {
-    lines.push("**Options**");
-    for (const field of builtin.fields) {
-      const values =
-        field.values?.join(" | ") ??
-        (field.kind === "direction" || field.kind === "sides"
-          ? DIRECTIONS.join(" | ")
-          : field.kind);
-      lines.push(`- \`${field.option}\`: ${values}`);
-    }
-    lines.push("");
-  }
-
-  if (builtin.condition) {
-    lines.push(
-      "Reads a value. Compare it in a condition, or assign it to a variable to measure it.",
-    );
-  }
-
-  return lines.join("\n");
-}
-
-/** Area shapes, for documentation elsewhere in the UI. */
-export const AREA_SHAPES = AREA_TYPES.map((a) => a.id);

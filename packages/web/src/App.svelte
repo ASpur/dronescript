@@ -1,9 +1,14 @@
 <script lang="ts">
+  import { tick } from "svelte";
+
   import { DEFAULT_TARGET, TARGETS } from "@dronescript/compiler";
   import type { CompileResult, Target } from "@dronescript/compiler";
 
   import Editor from "./lib/Editor.svelte";
   import Preview from "./lib/Preview.svelte";
+  import Reference from "./lib/Reference.svelte";
+  import ReferenceModal from "./lib/ReferenceModal.svelte";
+  import { setReferenceOpener } from "./lib/language.js";
   import CompileWorker from "./lib/compile.worker.ts?worker";
   import type { CompileRequest, CompileResponse } from "./lib/compile.worker.js";
   import { EXAMPLES } from "./lib/examples.js";
@@ -12,7 +17,16 @@
 
   let source = $state(INITIAL_SOURCE);
   let result: CompileResult | undefined = $state();
-  let tab: "preview" | "json" = $state("preview");
+  let tab: "preview" | "json" | "reference" = $state("preview");
+  let referenceExpanded = $state(false);
+  let reference: Reference | undefined = $state();
+
+  // Ctrl+click on a function name in the editor lands on its reference entry.
+  setReferenceOpener(async (name) => {
+    tab = "reference";
+    await tick();
+    reference?.scrollToFunction(name);
+  });
   let copied = $state(false);
   let editor: Editor | undefined = $state();
   let target: Target = $state(DEFAULT_TARGET);
@@ -116,8 +130,13 @@
           Puzzle layout
         </button>
         <button class:active={tab === "json"} onclick={() => (tab = "json")}>JSON</button>
+        <button class:active={tab === "reference"} onclick={() => (tab = "reference")}>
+          Reference
+        </button>
         <span class="spacer"></span>
-        {#if result?.pieces !== undefined && errors.length === 0}
+        {#if tab === "reference"}
+          <button class="expand" onclick={() => (referenceExpanded = true)}>Expand</button>
+        {:else if result?.pieces !== undefined && errors.length === 0}
           <span class="pieces">{result.pieces} pieces</span>
         {/if}
       </nav>
@@ -125,6 +144,8 @@
       <div class="output">
         {#if tab === "preview"}
           <Preview placed={result?.placed ?? []} />
+        {:else if tab === "reference"}
+          <Reference bind:this={reference} />
         {:else}
           <pre class="json">{result?.text ? formatJson(result.text) : ""}</pre>
         {/if}
@@ -168,6 +189,10 @@
       </span>
     {/if}
   </footer>
+
+  {#if referenceExpanded}
+    <ReferenceModal onclose={() => (referenceExpanded = false)} />
+  {/if}
 </div>
 
 <script module lang="ts">

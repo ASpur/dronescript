@@ -1,5 +1,10 @@
 <script lang="ts">
   import * as monaco from "monaco-editor/esm/vs/editor/editor.api";
+  // editor.api is the bare editor: each feature the UI relies on is opted into
+  // here. These give the hover cards, the completion list, and Ctrl+click links.
+  import "monaco-editor/esm/vs/editor/contrib/hover/browser/hoverContribution.js";
+  import "monaco-editor/esm/vs/editor/contrib/suggest/browser/suggestController.js";
+  import "monaco-editor/esm/vs/editor/contrib/links/browser/links.js";
   import editorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker";
   import { onMount } from "svelte";
 

@@ -4,8 +4,9 @@
     {
       "name": "dronescript-web",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev", "--workspace", "packages/web", "--", "--port", "5174"],
-      "port": 5174
+      "runtimeArgs": ["run", "dev", "--workspace", "packages/web"],
+      "port": 5174,
+      "autoPort": true
     }
   ]
 }

@@ -14,6 +14,8 @@ export default defineConfig({
   },
   server: {
     allowedHosts: TUNNEL_HOSTS,
+    // Honour an externally assigned port (e.g. a dev harness passing PORT).
+    port: process.env["PORT"] ? Number(process.env["PORT"]) : undefined,
   },
   preview: {
     allowedHosts: TUNNEL_HOSTS,
