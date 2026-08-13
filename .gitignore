@@ -5,3 +5,6 @@ dist/
 .wrangler/
 .DS_Store
 coverage/
+
+# Local scheduler state, not shared between machines.
+.claude/scheduled_tasks.lock
