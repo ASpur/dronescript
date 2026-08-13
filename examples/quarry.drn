@@ -1,0 +1,31 @@
+// Strip-mine a region, and head home to unload whenever the drone fills up.
+//
+// Every widget except a comment costs a Programming Puzzle piece, so this is
+// written to keep the piece count down: the conditions carry their own branch
+// targets rather than jumping.
+
+const pit = area(<100, 40, 100>, <115, 60, 115>);
+const dropOff = area(<98, 64, 98>);
+const junk = filter("minecraft:cobblestone");
+
+void unload() {
+  goto(dropOff);
+  exportItems(dropOff, {sides: ["up"]});
+}
+
+while (true) {
+  // Bail out before the drone strands itself with no pressure.
+  if (drone.pressure() <= 1) {
+    unload();
+    halt;
+  }
+
+  dig(pit, {except: junk, order: "highToLow"});
+
+  // A full drone cannot pick anything else up, so make a delivery run.
+  if (drone.items() >= 64) {
+    unload();
+  }
+
+  wait(20);
+}

@@ -1,0 +1,25 @@
+// Move items from an input chest into one of two output chests.
+
+const input = area(<0, 64, 0>);
+const oreChest = area(<2, 64, 0>);
+const otherChest = area(<4, 64, 0>);
+const ores = filter("minecraft:iron_ore");
+
+while (true) {
+  // Nothing to do until something shows up, so wait rather than spin.
+  if (itemsIn(input) == 0) {
+    wait(40);
+    continue;
+  }
+
+  importItems(input, {only: ores, sides: ["up"]});
+  goto(oreChest);
+  exportItems(oreChest, {sides: ["up"]});
+
+  goto(input);
+  importItems(input, {except: ores, sides: ["up"]});
+  goto(otherChest);
+  exportItems(otherChest, {sides: ["up"]});
+
+  goto(input);
+}
