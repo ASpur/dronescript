@@ -23,15 +23,27 @@
   onMount(() => {
     registerLanguage();
 
+    // Pulled from app.css so the editor reads as one surface with the chrome.
     monaco.editor.defineTheme("dronescript-dark", {
       base: "vs-dark",
       inherit: true,
-      colors: { "editor.background": "#1b1e24" },
+      colors: {
+        "editor.background": "#1b1d21",
+        "editorGutter.background": "#1b1d21",
+        "editor.lineHighlightBackground": "#25272c",
+        "editorLineNumber.foreground": "#5a5c65",
+        "editorLineNumber.activeForeground": "#a3a3a3",
+        "editorIndentGuide.background1": "#2d2f35",
+        "editorCursor.foreground": "#ffd257",
+        "editor.selectionBackground": "#3987e544",
+      },
       rules: [
-        { token: "type.identifier", foreground: "5aa9e6" },
-        { token: "variable.predefined", foreground: "e2925a" },
+        { token: "type.identifier", foreground: "3987e5" },
+        { token: "variable.predefined", foreground: "e09b17" },
       ],
     });
+
+    const ui = getComputedStyle(document.body).getPropertyValue("--font-ui");
 
     editor = monaco.editor.create(container, {
       value,
@@ -39,6 +51,7 @@
       theme: "dronescript-dark",
       automaticLayout: true,
       minimap: { enabled: false },
+      fontFamily: ui,
       fontSize: 13,
       scrollBeyondLastLine: false,
       renderLineHighlight: "gutter",
@@ -89,8 +102,10 @@
 <div class="editor" bind:this={container}></div>
 
 <style>
+  /* A flex child rather than height:100%: the pane also holds a header strip. */
   .editor {
-    height: 100%;
+    flex: 1;
+    min-height: 0;
     width: 100%;
   }
 </style>

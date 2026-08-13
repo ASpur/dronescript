@@ -177,7 +177,7 @@
             markerHeight="6"
             orient="auto-start-reverse"
           >
-            <path d="M0,0 L8,4 L0,8 z" fill="var(--muted)" />
+            <path d="M0,0 L8,4 L0,8 z" fill="var(--fg-muted)" />
           </marker>
         </defs>
 
@@ -202,13 +202,22 @@
               y={box.y}
               width={box.w}
               height={box.h}
-              rx="3"
               class="widget {box.category}"
               class:hovered={hovered === box.index}
             />
-            <text x={box.x + 4} y={box.y + 12} class="name">{box.label}</text>
+            <!-- Top-left highlight and bottom-right shade: the two strokes that
+                 make a flat square read as a bevelled Minecraft panel. -->
+            <path
+              class="lit"
+              d={`M ${box.x + 1} ${box.y + box.h - 1} L ${box.x + 1} ${box.y + 1} L ${box.x + box.w - 1} ${box.y + 1}`}
+            />
+            <path
+              class="shade"
+              d={`M ${box.x + box.w - 1} ${box.y + 1} L ${box.x + box.w - 1} ${box.y + box.h - 1} L ${box.x + 1} ${box.y + box.h - 1}`}
+            />
+            <text x={box.x + 5} y={box.y + 12} class="name">{box.label}</text>
             {#if box.detail}
-              <text x={box.x + 4} y={box.y + 24} class="detail">{box.detail}</text>
+              <text x={box.x + 5} y={box.y + 23} class="detail">{box.detail}</text>
             {/if}
           </g>
         {/each}
@@ -236,21 +245,32 @@
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    padding: 6px 10px;
-    border-bottom: 1px solid var(--border);
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--line);
+    background: var(--surface-sunken);
+  }
+
+  .controls button {
+    height: 22px;
+    padding: 0 8px;
+    font-size: 11px;
   }
 
   .hint {
-    color: var(--muted);
-    font-size: 12px;
+    color: var(--fg-muted);
+    font-size: 11px;
   }
 
+  /* The dotted grid the program floats on, matching the planner's node canvas. */
   .canvas {
     flex: 1;
     min-height: 0;
     overflow: auto;
     cursor: grab;
     touch-action: none;
+    background-color: var(--canvas);
+    background-image: radial-gradient(var(--canvas-dot) 1px, transparent 1px);
+    background-size: 20px 20px;
   }
 
   .canvas:active {
@@ -258,13 +278,29 @@
   }
 
   .empty {
-    color: var(--muted);
+    color: var(--fg-muted);
     padding: 24px;
+    font-size: 12px;
   }
 
   .widget {
-    stroke: rgb(0 0 0 / 0.4);
-    stroke-width: 1;
+    stroke: var(--mc-15);
+    stroke-width: 2;
+  }
+
+  .lit,
+  .shade {
+    fill: none;
+    stroke-width: 2;
+    pointer-events: none;
+  }
+
+  .lit {
+    stroke: rgb(255 255 255 / 0.3);
+  }
+
+  .shade {
+    stroke: rgb(0 0 0 / 0.28);
   }
 
   .widget.flow {
@@ -284,26 +320,26 @@
   }
 
   .widget.hovered {
-    stroke: #fff;
+    stroke: var(--glow);
     stroke-width: 2;
   }
 
   .name {
     font-size: 9px;
-    fill: #10131a;
-    font-weight: 600;
+    fill: var(--mc-15);
+    font-weight: 700;
     pointer-events: none;
   }
 
   .detail {
     font-size: 8px;
-    fill: rgb(16 19 26 / 0.75);
+    fill: rgb(17 19 23 / 0.7);
     pointer-events: none;
   }
 
   .jump {
     fill: none;
-    stroke: var(--muted);
+    stroke: var(--fg-muted);
     stroke-width: 1;
     stroke-dasharray: 4 3;
     opacity: 0.7;
@@ -311,11 +347,15 @@
 
   .legend {
     display: flex;
-    gap: 14px;
-    padding: 6px 10px;
-    border-top: 1px solid var(--border);
-    color: var(--muted);
-    font-size: 12px;
+    gap: 12px;
+    padding: 5px 8px;
+    border-top: 1px solid var(--line);
+    background: var(--surface-sunken);
+    color: var(--fg-muted);
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
   }
 
   .key {
@@ -324,10 +364,11 @@
     gap: 5px;
   }
 
+  /* Square swatches with the same hard border the widgets get. */
   .key i {
-    width: 10px;
-    height: 10px;
-    border-radius: 2px;
+    width: 9px;
+    height: 9px;
+    border: 1px solid var(--mc-15);
     display: inline-block;
   }
 

@@ -73,10 +73,10 @@
 
 <div class="app">
   <header>
-    <div class="title">
-      <strong>DroneScript</strong>
+    <h1 class="title">
+      DroneScript
       <span class="sub">a compiler for PneumaticCraft: Repressurized drones</span>
-    </div>
+    </h1>
     <div class="actions">
       <select onchange={changeTarget} aria-label="Mod version" title={targetNote}>
         {#each TARGETS as option (option.id)}
@@ -91,7 +91,7 @@
           <option value={example.name}>{example.name}</option>
         {/each}
       </select>
-      <button onclick={copyJson} disabled={!canExport}>
+      <button class="primary" onclick={copyJson} disabled={!canExport}>
         {copied ? "Copied" : "Copy program JSON"}
       </button>
     </div>
@@ -99,6 +99,9 @@
 
   <main>
     <section class="pane editor-pane">
+      <div class="pane-head">
+        <span class="eyebrow">Source</span>
+      </div>
       <Editor
         bind:this={editor}
         bind:value={source}
@@ -108,14 +111,14 @@
     </section>
 
     <section class="pane output-pane">
-      <nav class="tabs">
+      <nav class="pane-head tabs">
         <button class:active={tab === "preview"} onclick={() => (tab = "preview")}>
           Puzzle layout
         </button>
         <button class:active={tab === "json"} onclick={() => (tab = "json")}>JSON</button>
         <span class="spacer"></span>
         {#if result?.pieces !== undefined && errors.length === 0}
-          <span class="pieces">{result.pieces} puzzle pieces</span>
+          <span class="pieces">{result.pieces} pieces</span>
         {/if}
       </nav>
 
@@ -130,6 +133,15 @@
   </main>
 
   <footer class:bad={errors.length > 0 || issues.length > 0}>
+    <span class="status eyebrow">
+      {#if errors.length > 0}
+        {errors.length} error{errors.length === 1 ? "" : "s"}
+      {:else if issues.length > 0}
+        Bad output
+      {:else}
+        OK
+      {/if}
+    </span>
     {#if errors.length > 0}
       <ul class="messages">
         {#each errors.slice(0, 8) as diagnostic (diagnostic.span.start + diagnostic.code)}
@@ -179,26 +191,48 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 16px;
-    padding: 10px 16px;
-    border-bottom: 1px solid var(--border);
-    background: var(--panel);
+    gap: 12px;
+    padding: 6px 12px;
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
     flex-wrap: wrap;
   }
 
-  .title strong {
-    font-size: 15px;
+  .title {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    margin: 0;
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: -0.025em;
   }
 
   .sub {
-    color: var(--muted);
-    margin-left: 10px;
-    font-size: 13px;
+    color: var(--fg-muted);
+    font-size: 11px;
+    font-weight: 400;
+    letter-spacing: 0;
   }
 
+  /* Monocraft is a wide face, so the controls need somewhere to go on a phone. */
   .actions {
     display: flex;
-    gap: 8px;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  /* The one call to action on the page, tinted the way the accent is used
+     elsewhere: a wash of the accent rather than a solid fill. */
+  .primary:not(:disabled) {
+    color: var(--info);
+    border-color: color-mix(in srgb, var(--info) 45%, transparent);
+    background: color-mix(in srgb, var(--info) 12%, var(--surface));
+  }
+
+  .primary:not(:disabled):hover {
+    color: var(--fg);
+    background: color-mix(in srgb, var(--info) 22%, var(--surface));
   }
 
   main {
@@ -220,29 +254,40 @@
     min-height: 0;
     display: flex;
     flex-direction: column;
-    background: var(--panel);
+    background: var(--background);
   }
 
   .output-pane {
-    border-left: 1px solid var(--border);
+    border-left: 1px solid var(--line);
   }
 
-  .tabs {
+  /* Both panes carry the same 28px strip so their content lines up. */
+  .pane-head {
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 6px 10px;
-    border-bottom: 1px solid var(--border);
+    gap: 4px;
+    height: 30px;
+    padding: 0 8px;
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
   }
 
   .tabs button {
+    height: 22px;
+    padding: 0 8px;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--fg-muted);
     background: transparent;
     border-color: transparent;
   }
 
   .tabs button.active {
-    background: var(--panel-2);
-    border-color: var(--border);
+    color: var(--fg);
+    background: var(--surface-raised);
+    border-color: var(--line-strong);
   }
 
   .spacer {
@@ -250,8 +295,8 @@
   }
 
   .pieces {
-    color: var(--muted);
-    font-size: 12px;
+    color: var(--fg-muted);
+    font-size: 11px;
   }
 
   .output {
@@ -263,36 +308,53 @@
   .json {
     margin: 0;
     padding: 12px;
-    font-family: ui-monospace, "Cascadia Code", "Consolas", monospace;
+    font-family: var(--font-ui);
     font-size: 12px;
+    color: var(--fg-subtle);
     white-space: pre;
   }
 
   footer {
-    border-top: 1px solid var(--border);
-    background: var(--panel);
-    padding: 8px 16px;
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    border-top: 1px solid var(--line);
+    background: var(--surface);
+    padding: 6px 12px;
     max-height: 160px;
     overflow: auto;
-    font-size: 13px;
+    font-size: 12px;
+    color: var(--fg-muted);
   }
 
   footer.bad {
-    border-top-color: var(--error);
+    border-top-color: var(--bad);
   }
 
-  .ok {
-    color: var(--muted);
+  /* Square status pill, so the state reads before the message does. */
+  .status {
+    flex: none;
+    padding: 1px 6px;
+    border: 1px solid color-mix(in srgb, var(--good) 45%, transparent);
+    background: color-mix(in srgb, var(--good) 14%, transparent);
+    color: var(--good);
+    border-radius: 4px;
+  }
+
+  footer.bad .status {
+    border-color: color-mix(in srgb, var(--bad) 45%, transparent);
+    background: color-mix(in srgb, var(--bad) 14%, transparent);
+    color: var(--bad);
   }
 
   .messages {
     margin: 0;
-    padding-left: 18px;
-    color: var(--error);
+    padding-left: 16px;
+    color: var(--bad);
   }
 
   .where {
-    color: var(--muted);
+    color: var(--fg-muted);
     margin-right: 6px;
   }
 </style>
