@@ -10,18 +10,20 @@ import type { BuildOptions } from "./pipeline.js";
 import type { ProgramJson } from "./emit/emit.js";
 import type { PlacedWidget } from "./emit/model.js";
 import type { VerifyIssue } from "./verify/graphcheck.js";
+import type { Target } from "./spec/targets.js";
 
 export interface CompileOptions extends BuildOptions {}
 
 export interface CompileResult {
   readonly diagnostics: readonly Diagnostic[];
   /** Absent when compilation failed. */
-  readonly json?: ProgramJson;
+  readonly json?: ProgramJson | Record<string, unknown>;
   readonly text?: string;
   readonly placed?: readonly PlacedWidget[];
   readonly issues?: readonly VerifyIssue[];
   /** Programming Puzzle pieces the program costs. */
   readonly pieces?: number;
+  readonly target?: Target;
 }
 
 export function compile(source: string, options: CompileOptions = {}): CompileResult {
@@ -44,6 +46,7 @@ export function compile(source: string, options: CompileOptions = {}): CompileRe
       placed: result.placed,
       issues: result.issues,
       pieces: result.pieces,
+      target: result.target,
     };
   } catch (error) {
     diagnostics.error(

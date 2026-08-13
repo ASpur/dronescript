@@ -239,18 +239,18 @@ describe("build", () => {
         },
       ],
     };
-    const result = build(program);
-    expect(result.json.version).toBe(3);
+    const result = build(program, { target: "1.21" });
+    expect((result.json as any).version).toBe(3);
     expect(result.issues).toEqual([]);
 
-    const start = result.json.widgets.find((w) => w["type"] === "pneumaticcraft:start");
+    const start = (result.json as any).widgets.find((w: Record<string, unknown>) => w["type"] === "pneumaticcraft:start");
     expect(start).toEqual({ type: "pneumaticcraft:start", pos: { x: 0, y: 0 } });
 
-    const dig = result.json.widgets.find((w) => w["type"] === "pneumaticcraft:dig")!;
+    const dig = (result.json as any).widgets.find((w: Record<string, unknown>) => w["type"] === "pneumaticcraft:dig")!;
     // `dig_place` is a required key in the mod's codec even when otherwise default.
     expect(dig["dig_place"]).toEqual({ order: "closest" });
 
-    const areaWidget = result.json.widgets.find((w) => w["type"] === "pneumaticcraft:area")!;
+    const areaWidget = (result.json as any).widgets.find((w: Record<string, unknown>) => w["type"] === "pneumaticcraft:area")!;
     expect(areaWidget["area_type"]).toEqual({ type: "pneumaticcraft:box" });
     expect(areaWidget["pos1"]).toEqual([10, 64, 10]);
 
@@ -269,8 +269,8 @@ describe("build", () => {
         },
       ],
     };
-    const { json } = build(program);
-    const importer = json.widgets.find((w) => w["type"] === "pneumaticcraft:inventory_import")!;
+    const { json } = build(program, { target: "1.21" });
+    const importer = (json as any).widgets.find((w: Record<string, unknown>) => w["type"] === "pneumaticcraft:inventory_import")!;
     expect(importer["inv"]).toEqual({});
   });
 
@@ -278,20 +278,20 @@ describe("build", () => {
     const program: Program = {
       chains: [{ widgets: [widget("start"), widget("wait", { nonsense: 1 }, { params: [[text("1")]] })] }],
     };
-    expect(() => build(program)).toThrow(/no field "nonsense"/);
+    expect(() => build(program, { target: "1.21" })).toThrow(/no field "nonsense"/);
   });
 
   it("rejects a missing required field", () => {
     const program: Program = {
       chains: [{ widgets: [widget("start"), widget("dig", {}, {})] }],
     };
-    expect(() => build(program)).toThrow(/order/);
+    expect(() => build(program, { target: "1.21" })).toThrow(/order/);
   });
 
   it("rejects a parameter of the wrong type", () => {
     const program: Program = {
       chains: [{ widgets: [widget("start"), widget("wait", {}, { params: [[coordinate([0, 0, 0])]] })] }],
     };
-    expect(() => build(program)).toThrow(/expects a text parameter/);
+    expect(() => build(program, { target: "1.21" })).toThrow(/expects a text parameter/);
   });
 });

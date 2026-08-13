@@ -2,9 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/api.js";
 import type { CompileResult } from "../src/api.js";
+import type { Target } from "../src/spec/targets.js";
 
-function ok(source: string): CompileResult {
-  const result = compile(source);
+function ok(source: string, target?: Target): CompileResult {
+  const result = compile(source, target ? { target } : {});
   if (result.diagnostics.some((d) => d.severity === "error")) {
     throw new Error(
       "expected a clean compile, got:\n" +
@@ -16,14 +17,24 @@ function ok(source: string): CompileResult {
   return result;
 }
 
+/** Assertions about codec field names only make sense against that format. */
+function okV3(source: string): CompileResult {
+  return ok(source, "1.21");
+}
+
+function v3Widgets(result: CompileResult): Record<string, unknown>[] {
+  return (result.json as { widgets: Record<string, unknown>[] }).widgets;
+}
+
 function errors(source: string): string[] {
   return compile(source)
     .diagnostics.filter((d) => d.severity === "error")
     .map((d) => d.code);
 }
 
+/** Widget types in layout order — the same for every target. */
 function types(result: CompileResult): string[] {
-  return (result.json?.widgets ?? []).map((w) => String(w["type"]).replace("pneumaticcraft:", ""));
+  return (result.placed ?? []).map((p) => p.type);
 }
 
 describe("straight-line programs", () => {
@@ -36,7 +47,6 @@ describe("straight-line programs", () => {
     expect(types(result)).toContain("start");
     expect(types(result)).toContain("goto");
     expect(types(result)).toContain("wait");
-    expect(result.json?.version).toBe(3);
   });
 
   it("re-emits a shared area constant at each use site", () => {
@@ -50,11 +60,11 @@ describe("straight-line programs", () => {
   });
 
   it("passes options through to widget fields", () => {
-    const result = ok(`
+    const result = okV3(`
       const quarry = area(<0, 60, 0>, <15, 64, 15>);
       dig(quarry, {order: "lowToHigh", maxActions: 8});
     `);
-    const dig = result.json!.widgets.find((w) => w["type"] === "pneumaticcraft:dig")!;
+    const dig = v3Widgets(result).find((w) => w["type"] === "pneumaticcraft:dig")!;
     expect(dig["dig_place"]).toEqual({
       order: "lowToHigh",
       max_actions: 8,
@@ -63,16 +73,16 @@ describe("straight-line programs", () => {
   });
 
   it("always writes the order field, which the game requires", () => {
-    const result = ok(`dig(area(<0, 0, 0>));`);
-    const dig = result.json!.widgets.find((w) => w["type"] === "pneumaticcraft:dig")!;
+    const result = okV3(`dig(area(<0, 0, 0>));`);
+    const dig = v3Widgets(result).find((w) => w["type"] === "pneumaticcraft:dig")!;
     expect(dig["dig_place"]).toEqual({ order: "closest" });
   });
 
   it("encodes side lists as a bitmask", () => {
-    const result = ok(`
+    const result = okV3(`
       importItems(area(<0, 64, 0>), {sides: ["up", "down"]});
     `);
-    const w = result.json!.widgets.find((x) => x["type"] === "pneumaticcraft:inventory_import")!;
+    const w = v3Widgets(result).find((x) => x["type"] === "pneumaticcraft:inventory_import")!;
     // down = bit 0, up = bit 1
     expect(w["inv"]).toEqual({ sides: 0b11 });
   });
@@ -134,12 +144,12 @@ describe("arithmetic", () => {
 
 describe("conditions", () => {
   it("rewrites > as <= with the branches swapped", () => {
-    const result = ok(`
+    const result = okV3(`
       const chest = area(<0, 64, 0>);
       const cobble = filter("minecraft:cobblestone");
       if (itemsIn(chest, {only: cobble}) > 10) { wait(20); }
     `);
-    const condition = result.json!.widgets.find(
+    const condition = v3Widgets(result).find(
       (w) => w["type"] === "pneumaticcraft:condition_item_inventory",
     )!;
     // ">" has no widget, so the compiler emits "<=" and swaps the targets.
@@ -147,8 +157,8 @@ describe("conditions", () => {
   });
 
   it("keeps >= as-is", () => {
-    const result = ok(`if (drone.pressure() >= 5) { wait(1); }`);
-    const condition = result.json!.widgets.find(
+    const result = okV3(`if (drone.pressure() >= 5) { wait(1); }`);
+    const condition = v3Widgets(result).find(
       (w) => w["type"] === "pneumaticcraft:drone_condition_pressure",
     )!;
     expect((condition["drone_cond"] as Record<string, unknown>)["cond_op"]).toBeUndefined();
@@ -176,12 +186,12 @@ describe("conditions", () => {
   });
 
   it("compares two variables with a coordinate condition", () => {
-    const result = ok(`
+    const result = okV3(`
       int a = 1;
       int b = 2;
       if (a == b) { wait(5); }
     `);
-    const condition = result.json!.widgets.find(
+    const condition = v3Widgets(result).find(
       (w) => w["type"] === "pneumaticcraft:condition_coordinate",
     )!;
     expect(condition["cond_op"]).toBe("eq");
@@ -189,12 +199,12 @@ describe("conditions", () => {
   });
 
   it("compares a single component on the named axis", () => {
-    const result = ok(`
+    const result = okV3(`
       coord p = <1, 2, 3>;
       coord q = <4, 5, 6>;
       if (p.y >= q.y) { wait(5); }
     `);
-    const condition = result.json!.widgets.find(
+    const condition = v3Widgets(result).find(
       (w) => w["type"] === "pneumaticcraft:condition_coordinate",
     )!;
     expect(condition["axis_options"]).toEqual({ axes: 0b010 });
@@ -210,11 +220,11 @@ describe("conditions", () => {
   });
 
   it("measures a sensor into a variable when used as a value", () => {
-    const result = ok(`
+    const result = okV3(`
       int n;
       n = drone.pressure();
     `);
-    const condition = result.json!.widgets.find(
+    const condition = v3Widgets(result).find(
       (w) => w["type"] === "pneumaticcraft:drone_condition_pressure",
     )!;
     expect((condition["drone_cond"] as Record<string, unknown>)["measure_var"]).toBe("n");

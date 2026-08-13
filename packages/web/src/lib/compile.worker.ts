@@ -4,11 +4,12 @@
  */
 
 import { compile } from "@dronescript/compiler";
-import type { CompileResult } from "@dronescript/compiler";
+import type { CompileResult, Target } from "@dronescript/compiler";
 
 export interface CompileRequest {
   readonly id: number;
   readonly source: string;
+  readonly target: Target;
 }
 
 export interface CompileResponse {
@@ -17,8 +18,8 @@ export interface CompileResponse {
 }
 
 self.onmessage = (event: MessageEvent<CompileRequest>) => {
-  const { id, source } = event.data;
-  const result = compile(source, { tolerateIssues: true });
+  const { id, source, target } = event.data;
+  const result = compile(source, { target, tolerateIssues: true });
   const response: CompileResponse = { id, result };
   self.postMessage(response);
 };

@@ -1,5 +1,7 @@
 export * from "./spec/types.js";
 export * from "./spec/widgets.js";
+export * from "./spec/targets.js";
+export * from "./emit/emitV2.js";
 export * from "./emit/model.js";
 export * from "./emit/emit.js";
 export * from "./layout/geometry.js";

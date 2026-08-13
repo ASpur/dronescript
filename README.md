@@ -5,8 +5,18 @@ A compiler that turns a C-like language into drone programs for
 so you can write a program in a text editor instead of dragging puzzle pieces
 around the in-game Programmer.
 
-Target: **Minecraft 1.21.1 / NeoForge**, mod branch `1.21` (v8.2.x) — the version
-in FTB NeoTech.
+Two mod versions are supported, chosen with the version selector in the toolbar:
+
+| Target | Minecraft | Mod | Format |
+| --- | --- | --- | --- |
+| **1.20.4** (default) | 1.20.1 – 1.20.4 | 7.0.x | NBT rendered as JSON with type tags |
+| 1.21 | 1.21.1 | 8.x | Codec JSON with a `version` field |
+
+**FTB NeoTech runs Minecraft 1.20.4**, so leave the default alone for that pack.
+The mod rewrote its serialization for 1.20.6, and the two formats are not
+interchangeable — pasting the wrong one gives "Invalid formatted Pastebin or
+JSON." in the Programmer. Widget geometry is identical in both, so a program's
+layout and puzzle-piece count do not change when you switch.
 
 ```c
 const pit = area(<100, 40, 100>, <115, 60, 115>);
@@ -129,6 +139,9 @@ npm run build   # static site into packages/web/dist
   source of truth: all 61 widget types transcribed from the mod source, with the
   Java class named on each entry so it can be re-audited upstream. It drives the
   emitter, the verifier, the builtin signatures and the editor's completions.
+  Field names there follow the 1.21 codecs;
+  [`src/emit/emitV2.ts`](packages/compiler/src/emit/emitV2.ts) maps them onto the
+  older NBT names and flattens the groups that version keeps flat.
 - `packages/web` — Svelte + Vite + Monaco. The compiler runs in a web worker.
 - `examples/` — programs that double as integration tests, with their piece
   counts pinned so an optimisation win or regression shows up in the diff.

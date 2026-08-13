@@ -1,5 +1,6 @@
 <script lang="ts">
-  import type { CompileResult } from "@dronescript/compiler";
+  import { DEFAULT_TARGET, TARGETS } from "@dronescript/compiler";
+  import type { CompileResult, Target } from "@dronescript/compiler";
 
   import Editor from "./lib/Editor.svelte";
   import Preview from "./lib/Preview.svelte";
@@ -14,6 +15,7 @@
   let tab: "preview" | "json" = $state("preview");
   let copied = $state(false);
   let editor: Editor | undefined = $state();
+  let target: Target = $state(DEFAULT_TARGET);
 
   const worker = new CompileWorker();
   let pending = 0;
@@ -27,8 +29,14 @@
   };
 
   function requestCompile(next: string): void {
-    const message: CompileRequest = { id: ++pending, source: next };
+    const message: CompileRequest = { id: ++pending, source: next, target };
     worker.postMessage(message);
+  }
+
+  function changeTarget(event: Event): void {
+    target = (event.currentTarget as HTMLSelectElement).value as Target;
+    // The two versions serialize differently, so recompile rather than reuse.
+    requestCompile(source);
   }
 
   // Compile as the program is typed, on a short debounce.
@@ -46,6 +54,7 @@
   const warnings = $derived((result?.diagnostics ?? []).filter((d) => d.severity === "warning"));
   const issues = $derived(result?.issues ?? []);
   const canExport = $derived(errors.length === 0 && issues.length === 0 && !!result?.text);
+  const targetNote = $derived(TARGETS.find((t) => t.id === target)?.note ?? "");
 
   async function copyJson(): Promise<void> {
     if (!result?.text) return;
@@ -69,6 +78,13 @@
       <span class="sub">a compiler for PneumaticCraft: Repressurized drones</span>
     </div>
     <div class="actions">
+      <select onchange={changeTarget} aria-label="Mod version" title={targetNote}>
+        {#each TARGETS as option (option.id)}
+          <option value={option.id} selected={option.id === target}>
+            MC {option.minecraft}
+          </option>
+        {/each}
+      </select>
       <select onchange={loadExample} aria-label="Load an example">
         <option value="">Examples…</option>
         {#each EXAMPLES as example (example.name)}

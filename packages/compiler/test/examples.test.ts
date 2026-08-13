@@ -23,15 +23,26 @@ describe("examples", () => {
   });
 
   for (const file of files) {
-    it(`compiles ${file} to a program the game will read back correctly`, () => {
-      const source = readFileSync(join(EXAMPLES_DIR, file), "utf8");
-      const result = compile(source);
-      expect(
-        result.diagnostics.filter((d) => d.severity === "error").map((d) => `${d.code}: ${d.message}`),
-      ).toEqual([]);
-      expect(result.issues).toEqual([]);
-      expect(result.json?.version).toBe(3);
-      expect(result.pieces).toBe(EXPECTED_PIECES[file]);
-    });
+    // Both formats have to work: the examples are what people start from.
+    for (const target of ["1.20.4", "1.21"] as const) {
+      it(`compiles ${file} for ${target}`, () => {
+        const source = readFileSync(join(EXAMPLES_DIR, file), "utf8");
+        const result = compile(source, { target });
+        expect(
+          result.diagnostics
+            .filter((d) => d.severity === "error")
+            .map((d) => `${d.code}: ${d.message}`),
+        ).toEqual([]);
+        expect(result.issues).toEqual([]);
+        // Piece count is a property of the layout, so it holds for both.
+        expect(result.pieces).toBe(EXPECTED_PIECES[file]);
+
+        if (target === "1.21") {
+          expect((result.json as { version: number }).version).toBe(3);
+        } else {
+          expect(Object.keys(result.json!)).toEqual(["pneumaticcraft:progWidgets"]);
+        }
+      });
+    }
   }
 });
