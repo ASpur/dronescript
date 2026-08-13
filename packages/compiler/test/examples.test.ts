@@ -11,6 +11,7 @@ const EXAMPLES_DIR = join(import.meta.dirname, "..", "..", "..", "examples");
  * here is either a win worth recording or a regression worth explaining.
  */
 const EXPECTED_PIECES: Record<string, number> = {
+  "companion.drn": 15,
   "quarry.drn": 27,
   "sorter.drn": 26,
 };

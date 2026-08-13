@@ -1,0 +1,16 @@
+// Carry oozeboy along, and stick close to unzable.
+//
+// Assumes unzable owns/deployed this drone, so $owner_pos already tracks them
+// live with no name lookup needed. oozeboy has to be within one block of the
+// drone to be picked up: the drone has no way to search for a named player's
+// position (DroneScript has no lookup for an arbitrary player, only the
+// deploying owner), so this only grabs him once he walks up to it.
+
+while (true) {
+  if (drone.entities({entities: "oozeboy"}) == 0) {
+    importEntities($drone_pos, {entities: "oozeboy"});
+  }
+
+  goto($owner_pos);
+  wait(10);
+}
