@@ -1,0 +1,8 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "dronescript",
+  "compatibility_date": "2026-01-01",
+  // Cloudflare Pages serves the Vite build output as a static site; there is no
+  // server side, since the compiler runs entirely in the browser.
+  "pages_build_output_dir": "packages/web/dist"
+}
