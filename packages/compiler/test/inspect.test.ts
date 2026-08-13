@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it } from "vitest";
 
@@ -8,7 +8,7 @@ const EXAMPLES_DIR = join(import.meta.dirname, "..", "..", "..", "examples");
 
 /** Not an assertion — a way to read what the compiler actually produced. */
 describe.skipIf(!process.env["INSPECT"])("inspect", () => {
-  for (const file of ["quarry.drn", "sorter.drn"]) {
+  for (const file of readdirSync(EXAMPLES_DIR).filter((f) => f.endsWith(".drn"))) {
     it(file, () => {
       const result = compile(readFileSync(join(EXAMPLES_DIR, file), "utf8"));
       const counts: Record<string, number> = {};

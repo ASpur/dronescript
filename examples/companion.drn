@@ -1,16 +1,31 @@
 // Carry oozeboy along, and stick close to unzable.
 //
-// Assumes unzable owns/deployed this drone, so $owner_pos already tracks them
-// live with no name lookup needed. oozeboy has to be within one block of the
-// drone to be picked up: the drone has no way to search for a named player's
-// position (DroneScript has no lookup for an arbitrary player, only the
-// deploying owner), so this only grabs him once he walks up to it.
+// Assumes unzable owns/deployed this drone, so $owner_pos tracks them live.
+// There is no equivalent lookup for any other player, so oozeboy is found by
+// searching rather than by asking where he is: the import sweeps a box around
+// the drone and flies to him if he is inside it. That box is a search volume,
+// not a reach limit, and widening it costs no extra pieces.
+//
+// The quotes around the name are load-bearing. An unquoted entity filter is a
+// wildcard match on the entity *type* ("player", "zombie"), which no username
+// ever matches. A quoted one matches the player's name instead — exactly, and
+// case sensitively, since only * and ? are wildcards.
 
 while (true) {
-  if (drone.entities({entities: "oozeboy"}) == 0) {
-    importEntities($drone_pos, {entities: "oozeboy"});
+  if (drone.entities({entities: "\"oozeboy\""}) == 0) {
+    // An area is defined by two corners and a box has no "expand" setting, so
+    // reaching a block out in every direction means computing both of them.
+    coord sweepLo = $drone_pos - <1, 1, 1>;
+    coord sweepHi = $drone_pos + <1, 1, 1>;
+    importEntities(area(sweepLo, sweepHi), {entities: "\"oozeboy\""});
   }
 
-  goto($owner_pos);
+  // Trail unzable at arm's length instead of occupying their block. goto heads
+  // for the nearest block of its area and gives up once it is already there,
+  // so a box reads as "anywhere in here will do" and the drone stops shoving.
+  coord nearLo = $owner_pos - <2, 2, 2>;
+  coord nearHi = $owner_pos + <2, 2, 2>;
+  goto(area(nearLo, nearHi));
+
   wait(10);
 }
