@@ -5,6 +5,7 @@
   import "monaco-editor/esm/vs/editor/contrib/hover/browser/hoverContribution.js";
   import "monaco-editor/esm/vs/editor/contrib/suggest/browser/suggestController.js";
   import "monaco-editor/esm/vs/editor/contrib/links/browser/links.js";
+  import "monaco-editor/esm/vs/editor/contrib/parameterHints/browser/parameterHints.js";
   import editorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker";
   import { onMount } from "svelte";
 

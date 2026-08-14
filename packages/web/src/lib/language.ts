@@ -10,16 +10,25 @@
 import * as monaco from "monaco-editor/esm/vs/editor/editor.api";
 import { BUILTINS, KEYWORDS } from "@dronescript/compiler";
 import {
+  docMarkdown,
   documentationFor,
+  findFunctionDoc,
   PSEUDO_FUNCTIONS,
+  signatureLayout,
   signatureOf,
   SPECIAL_VARIABLE_DOCS,
 } from "./reference.js";
+import type { FunctionDoc, SpecialVariableDoc } from "./reference.js";
 
 export const LANGUAGE_ID = "dronescript";
 
 const SPECIAL_VARIABLES = SPECIAL_VARIABLE_DOCS.filter((d) => !d.legacy && !d.prefix).map(
   (d) => d.name,
+);
+
+/** Keyed on the bare sigil name, so `$player_pos=Steve` finds `$player_pos=name`. */
+const SPECIALS_BY_NAME = new Map<string, SpecialVariableDoc>(
+  SPECIAL_VARIABLE_DOCS.map((d) => [d.prefix ? d.name.split("=")[0]! : d.name, d]),
 );
 
 /** Names that have a reference-sheet entry to Ctrl+click through to. */
@@ -72,6 +81,9 @@ export function registerLanguage(): void {
   });
 
   monaco.languages.setLanguageConfiguration(LANGUAGE_ID, {
+    // Sigils belong to the word: without this, hovering `$drone_pos` asks about
+    // `drone_pos`, and completing it would leave the `$` behind.
+    wordPattern: /[#%$]?[A-Za-z_]\w*/,
     comments: { lineComment: "//", blockComment: ["/*", "*/"] },
     brackets: [
       ["{", "}"],
@@ -132,12 +144,13 @@ export function registerLanguage(): void {
         });
       }
 
-      for (const name of ["area", "filter", "fluid"]) {
+      for (const doc of PSEUDO_FUNCTIONS) {
         suggestions.push({
-          label: name,
+          label: doc.name,
           kind: monaco.languages.CompletionItemKind.Function,
-          detail: "compile-time value",
-          insertText: `${name}($0)`,
+          detail: doc.signature,
+          documentation: { value: docMarkdown(doc) },
+          insertText: `${doc.name}($0)`,
           insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
           range,
         });
@@ -179,18 +192,178 @@ export function registerLanguage(): void {
 
   monaco.languages.registerHoverProvider(LANGUAGE_ID, {
     provideHover(model, position) {
-      const word = model.getWordAtPosition(position);
-      if (!word) return null;
-      const builtin =
-        BUILTINS.find((b) => b.name === word.word) ??
-        BUILTINS.find((b) => b.name.split(".").pop() === word.word);
-      if (!builtin) return null;
+      const hover = hoverAt(model, position);
+      if (!hover) return null;
       return {
+        range: hover.range,
         contents: [
-          { value: `\`\`\`\n${signatureOf(builtin)}\n\`\`\`` },
-          { value: documentationFor(builtin) },
+          { value: `\`\`\`dronescript\n${hover.signature}\n\`\`\`` },
+          { value: hover.markdown },
         ],
       };
     },
   });
+
+  // The VS Code parameter hint: while the caret sits inside a call's parens, show
+  // the inputs it takes and underline the one being typed.
+  monaco.languages.registerSignatureHelpProvider(LANGUAGE_ID, {
+    signatureHelpTriggerCharacters: ["(", ",", "{"],
+    signatureHelpRetriggerCharacters: [")", "}"],
+    provideSignatureHelp(model, position) {
+      const call = callAt(model, position);
+      if (!call) return null;
+      const layout = signatureLayout(call.doc);
+      return {
+        value: {
+          signatures: [
+            {
+              label: layout.label,
+              documentation: { value: call.doc.summary },
+              parameters: layout.parameters.map((p) => ({
+                label: p.label,
+                documentation: { value: p.documentation },
+              })),
+            },
+          ],
+          activeSignature: 0,
+          activeParameter: Math.min(call.activeParameter, layout.parameters.length - 1),
+        },
+        dispose() {},
+      };
+    },
+  });
+}
+
+export interface HoverInfo {
+  readonly signature: string;
+  readonly markdown: string;
+  readonly range: monaco.IRange;
+}
+
+/**
+ * What to show for the word under the caret: a function's inputs, or a special
+ * variable's meaning. Separate from the provider so it can be exercised directly.
+ */
+export function hoverAt(
+  model: monaco.editor.ITextModel,
+  position: monaco.IPosition,
+): HoverInfo | undefined {
+  const word = model.getWordAtPosition(position);
+  if (!word) return undefined;
+  const range = new monaco.Range(
+    position.lineNumber,
+    word.startColumn,
+    position.lineNumber,
+    word.endColumn,
+  );
+
+  const doc = resolveDoc(model, position, word.word);
+  if (doc) return { signature: doc.signature, markdown: docMarkdown(doc), range };
+
+  const special = SPECIALS_BY_NAME.get(word.word);
+  if (special) {
+    return {
+      signature: special.name,
+      markdown: `${special.description}\n\nA coordinate the game resolves itself — read-only${
+        special.legacy ? ", and a legacy spelling" : ""
+      }.`,
+      range,
+    };
+  }
+
+  return undefined;
+}
+
+/** A qualified name like `drone.rf` is two words to Monaco; rejoin it. */
+function resolveDoc(
+  model: monaco.editor.ITextModel,
+  position: monaco.IPosition,
+  word: string,
+): FunctionDoc | undefined {
+  const before = model.getValueInRange({
+    startLineNumber: position.lineNumber,
+    startColumn: 1,
+    endLineNumber: position.lineNumber,
+    endColumn: position.column,
+  });
+  const qualifier = /([A-Za-z_]\w*)\.\w*$/.exec(before)?.[1];
+  return (
+    (qualifier ? findFunctionDoc(`${qualifier}.${word}`) : undefined) ??
+    findFunctionDoc(word) ??
+    // `pressure` on its own still means `drone.pressure` if nothing else claims it.
+    (() => {
+      const tail = BUILTINS.filter((b) => b.name.split(".").pop() === word);
+      return tail.length === 1 ? findFunctionDoc(tail[0]!.name) : undefined;
+    })()
+  );
+}
+
+/**
+ * The call the caret sits inside, and which input it is on. Walks the text once,
+ * skipping comments and strings, keeping a frame per open paren: commas only
+ * count at the frame's own bracket depth, so an options object or a nested call
+ * never shifts the count.
+ */
+function callAt(
+  model: monaco.editor.ITextModel,
+  position: monaco.IPosition,
+): { doc: FunctionDoc; activeParameter: number } | undefined {
+  const text = model.getValue().slice(0, model.getOffsetAt(position));
+  const frames: { start: number; commas: number; depth: number }[] = [];
+
+  scan: for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === "/" && text[i + 1] === "/") {
+      const end = text.indexOf("\n", i);
+      if (end < 0) return undefined; // the caret is inside a comment
+      i = end;
+      continue;
+    }
+    if (c === "/" && text[i + 1] === "*") {
+      const end = text.indexOf("*/", i + 2);
+      if (end < 0) return undefined;
+      i = end + 1;
+      continue;
+    }
+    if (c === '"') {
+      let j = i + 1;
+      while (j < text.length && text[j] !== '"') j += text[j] === "\\" ? 2 : 1;
+      // Unterminated means the caret is inside a string argument — still an
+      // argument, so keep the frames and stop rather than giving up.
+      if (j >= text.length) break scan;
+      i = j;
+      continue;
+    }
+    if (c === "<") {
+      // `<x, y, z>` is one argument, so its commas must not advance the count.
+      // A `<` that does not close on this line is an operator, not a literal.
+      const close = text.indexOf(">", i + 1);
+      const newline = text.indexOf("\n", i + 1);
+      const end = close >= 0 && (newline < 0 || close < newline) ? close : -1;
+      const span = text.slice(i + 1, end >= 0 ? end : newline < 0 ? text.length : newline);
+      if (span.includes(",")) {
+        if (end < 0) break scan; // the caret is inside the literal
+        i = end;
+        continue;
+      }
+    }
+
+    const top = frames[frames.length - 1];
+    if (c === "(") frames.push({ start: i, commas: 0, depth: 0 });
+    else if (c === ")") frames.pop();
+    else if (c === "{" || c === "[") {
+      if (top) top.depth++;
+    } else if (c === "}" || c === "]") {
+      if (top && top.depth > 0) top.depth--;
+    } else if (c === "," && top && top.depth === 0) top.commas++;
+  }
+
+  // Innermost first: a grouping paren has no name, so fall out to the real call.
+  for (let f = frames.length - 1; f >= 0; f--) {
+    const frame = frames[f]!;
+    const name = /([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)?)\s*$/.exec(text.slice(0, frame.start))?.[1];
+    const doc = name ? findFunctionDoc(name) : undefined;
+    if (doc) return { doc, activeParameter: frame.commas };
+  }
+  return undefined;
 }

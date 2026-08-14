@@ -24,12 +24,23 @@ export interface OptionDoc {
   readonly type: string;
 }
 
+export interface PositionalDoc {
+  /** As it reads in the signature: the type for builtins, a name for `area()`. */
+  readonly label: string;
+  readonly type: string;
+  readonly required: boolean;
+  /** A slot the widget table never reads, so whatever is passed is discarded. */
+  readonly ignored?: boolean;
+}
+
 export interface FunctionDoc {
   readonly name: string;
   readonly signature: string;
   readonly summary: string;
   /** Condition widgets: usable in `if`/`while`/`for`, or assigned to measure. */
   readonly sensor: boolean;
+  /** Arguments passed by position, in call order. */
+  readonly positional: readonly PositionalDoc[];
   /** Filter/area options that become parameter widgets (`only`, `exceptArea`). */
   readonly parameters: readonly OptionDoc[];
   /** Scalar options that become widget fields (`order`, `maxActions`). */
@@ -37,9 +48,21 @@ export interface FunctionDoc {
 }
 
 export function docFor(builtin: BuiltinSpec): FunctionDoc {
-  const positional = builtin.params
-    .filter((p) => p.from.kind === "arg" && p.side === "whitelist")
-    .map((p) => p.type);
+  // Bindings carry the argument index they read, and the order in the table is
+  // not always that order — so place each one by index rather than by position.
+  const byIndex: PositionalDoc[] = [];
+  for (const p of builtin.params) {
+    if (p.from.kind !== "arg" || p.side !== "whitelist") continue;
+    byIndex[p.from.index] = {
+      label: p.type,
+      type: p.type.replace("_", " "),
+      required: p.required === true,
+    };
+  }
+  const positional = Array.from(byIndex, (slot) =>
+    slot ?? { label: "_", type: "ignored", required: false, ignored: true },
+  );
+
   const parameters = builtin.params.flatMap((p) =>
     p.from.kind === "option" ? [{ name: p.from.name, type: p.type.replace("_", " ") }] : [],
   );
@@ -53,25 +76,42 @@ export function docFor(builtin: BuiltinSpec): FunctionDoc {
   }));
   return {
     name: builtin.name,
-    signature: `${builtin.name}(${positional.join(", ")}${positional.length > 0 ? ", " : ""}{options})`,
+    signature: signatureFrom(builtin.name, positional),
     summary: builtin.summary,
     sensor: builtin.condition !== undefined,
+    positional,
     parameters,
     options,
   };
+}
+
+function signatureFrom(name: string, positional: readonly PositionalDoc[]): string {
+  const labels = positional.map((p) => p.label);
+  return `${name}(${labels.join(", ")}${labels.length > 0 ? ", " : ""}{options})`;
 }
 
 export function signatureOf(builtin: BuiltinSpec): string {
   return docFor(builtin).signature;
 }
 
-/** Markdown form of a builtin's documentation, for Monaco hovers and completions. */
-export function documentationFor(builtin: BuiltinSpec): string {
-  const doc = docFor(builtin);
+/** Markdown documentation for anything with a reference entry. */
+export function docMarkdown(doc: FunctionDoc): string {
   const lines = [doc.summary, ""];
 
+  if (doc.positional.length > 0) {
+    lines.push("**Inputs** — passed by position");
+    for (const p of doc.positional) {
+      lines.push(
+        p.ignored
+          ? `- \`_\` — nothing reads this slot, so whatever is passed is discarded`
+          : `- \`${p.label}\` — ${p.type}${p.required ? ", required" : ", optional"}`,
+      );
+    }
+    lines.push("");
+  }
+
   if (doc.parameters.length > 0) {
-    lines.push("**Parameters**");
+    lines.push("**Parameters** — named, in the trailing `{…}`");
     for (const p of doc.parameters) {
       lines.push(`- \`${p.name}\` — ${p.type}`);
     }
@@ -79,7 +119,7 @@ export function documentationFor(builtin: BuiltinSpec): string {
   }
 
   if (doc.options.length > 0) {
-    lines.push("**Options**");
+    lines.push("**Options** — named, in the trailing `{…}`");
     for (const o of doc.options) {
       lines.push(`- \`${o.name}\`: ${o.type}`);
     }
@@ -93,6 +133,66 @@ export function documentationFor(builtin: BuiltinSpec): string {
   }
 
   return lines.join("\n");
+}
+
+/** Markdown form of a builtin's documentation, for Monaco hovers and completions. */
+export function documentationFor(builtin: BuiltinSpec): string {
+  return docMarkdown(docFor(builtin));
+}
+
+/** Every name with a reference entry: builtins plus the compile-time values. */
+const DOCS_BY_NAME = new Map<string, FunctionDoc>();
+
+/** Look up a function's docs by its written name, e.g. `dig`, `drone.rf`, `area`. */
+export function findFunctionDoc(name: string): FunctionDoc | undefined {
+  return DOCS_BY_NAME.get(name);
+}
+
+export interface SignatureParameter {
+  /** Offsets into the signature label, for highlighting the active input. */
+  readonly label: [number, number];
+  readonly documentation: string;
+}
+
+export interface SignatureLayout {
+  readonly label: string;
+  readonly parameters: readonly SignatureParameter[];
+}
+
+/**
+ * Locate each input inside the signature text, so Monaco can highlight the one
+ * being typed. The labels are found by scanning rather than rebuilt, which keeps
+ * hand-written signatures like `area(pos1, pos2?, {options})` working.
+ */
+export function signatureLayout(doc: FunctionDoc): SignatureLayout {
+  const parameters: SignatureParameter[] = [];
+  let cursor = doc.name.length;
+
+  for (const p of doc.positional) {
+    const start = doc.signature.indexOf(p.label, cursor);
+    if (start < 0) continue;
+    cursor = start + p.label.length;
+    parameters.push({
+      label: [start, cursor],
+      documentation: p.ignored
+        ? "Nothing reads this slot — whatever is passed is discarded."
+        : `${p.type}${p.required ? ", required" : ", optional"}`,
+    });
+  }
+
+  const options = doc.signature.indexOf("{options}", cursor);
+  if (options >= 0) {
+    const named = [...doc.parameters, ...doc.options];
+    parameters.push({
+      label: [options, options + "{options}".length],
+      documentation:
+        named.length > 0
+          ? named.map((o) => `\`${o.name}\`: ${o.type}`).join("\n\n")
+          : "This function takes no named options.",
+    });
+  }
+
+  return { label: doc.signature, parameters };
 }
 
 // --- Function categories -----------------------------------------------------
@@ -183,6 +283,10 @@ export const PSEUDO_FUNCTIONS: readonly FunctionDoc[] = [
     summary:
       "Define an area from two corner positions — coordinate literals, constants, or variables. With one position, the area is that single block.",
     sensor: false,
+    positional: [
+      { label: "pos1", type: "coord", required: true },
+      { label: "pos2?", type: "coord — omit for a one-block area", required: false },
+    ],
     parameters: [],
     options: [{ name: "shape", type: AREA_TYPES.map((a) => a.id).join(" | ") }],
   },
@@ -191,6 +295,7 @@ export const PSEUDO_FUNCTIONS: readonly FunctionDoc[] = [
     signature: 'filter("mod:item", {options})',
     summary: "Define an item filter. Match a specific item, or widen the match with options.",
     sensor: false,
+    positional: [{ label: '"mod:item"', type: "text — an item id", required: false }],
     parameters: [],
     options: [
       { name: "matchDurability", type: "bool" },
@@ -205,6 +310,7 @@ export const PSEUDO_FUNCTIONS: readonly FunctionDoc[] = [
     signature: 'fluid("mod:fluid", {options})',
     summary: "Define a fluid filter.",
     sensor: false,
+    positional: [{ label: '"mod:fluid"', type: "text — a fluid id", required: true }],
     parameters: [],
     options: [{ name: "amount", type: "int — millibuckets, defaults to 1000" }],
   },
@@ -214,10 +320,14 @@ export const PSEUDO_FUNCTIONS: readonly FunctionDoc[] = [
     summary:
       "Iterate the drone's inventory. Only legal as the iterable of a foreach: foreach (item in items(f)) { … }.",
     sensor: false,
+    positional: [{ label: "filter", type: "item filter", required: true }],
     parameters: [],
     options: [],
   },
 ];
+
+for (const builtin of BUILTINS) DOCS_BY_NAME.set(builtin.name, docFor(builtin));
+for (const doc of PSEUDO_FUNCTIONS) DOCS_BY_NAME.set(doc.name, doc);
 
 export interface AreaShapeDoc {
   readonly id: string;
