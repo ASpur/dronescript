@@ -15,6 +15,7 @@ export type * as ast from "./ast.js";
 export * from "./lexer.js";
 export * from "./parser.js";
 export * from "./spec/builtins.js";
+export * from "./spec/controller.js";
 export { SPECIAL_VARIABLES, SPECIAL_VARIABLE_PREFIXES } from "./sema/values.js";
 export * from "./ir/ir.js";
 export * from "./layout/linearize.js";

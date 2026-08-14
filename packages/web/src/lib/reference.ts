@@ -408,8 +408,9 @@ const water = fluid("minecraft:water");`,
       },
       {
         title: "Coordinates",
-        body: "A coordinate literal is <x, y, z>. Components read back with .x, .y and .z — but only .x can be read into an int (see limitations). Coordinate arithmetic folds a whole chain of operands into one widget.",
+        body: "A coordinate literal is <x, y, z>. Components read back with .x, .y and .z — but only .x can be read into an int (see limitations). Coordinate arithmetic folds a whole chain of operands into one widget, and works inline wherever a position is expected — a runtime operand costs the same one widget the spelled-out assignment would, and an all-constant expression costs nothing.",
         code: `coord above = $drone_pos + <0, 3, 0>;
+goto(refuelTarget + <0, 1, 0>);
 int col = above.x;`,
       },
       {

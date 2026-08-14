@@ -7,6 +7,7 @@
  */
 
 import { getWidget } from "../spec/widgets.js";
+import type { FieldSpec } from "../spec/types.js";
 import type { PlacedWidget } from "../emit/model.js";
 import type { IntentNode } from "../layout/place.js";
 import { relink } from "./relink.js";
@@ -33,6 +34,39 @@ export interface VerifyResult {
 
 function describe(placed: PlacedWidget, index: number): string {
   return `#${index} ${placed.type} at (${placed.x}, ${placed.y})`;
+}
+
+/** Paths to every side mask a widget declares, `inv.sides` or a bare `sides`. */
+function sidesPaths(fields: readonly FieldSpec[], prefix: readonly string[] = []): string[][] {
+  const out: string[][] = [];
+  for (const field of fields) {
+    if (field.kind === "sides") out.push([...prefix, field.json]);
+    else if (field.kind === "group") out.push(...sidesPaths(field.fields ?? [], [...prefix, field.json]));
+  }
+  return out;
+}
+
+function readPath(fields: Record<string, unknown>, path: readonly string[]): unknown {
+  let node: unknown = fields;
+  for (const key of path) {
+    if (typeof node !== "object" || node === null) return undefined;
+    node = (node as Record<string, unknown>)[key];
+  }
+  return node;
+}
+
+/**
+ * A condition measuring into a variable satisfies the mod's flow-control check
+ * on its own, since the widget then has a purpose beyond branching.
+ */
+function hasMeasureVar(placed: PlacedWidget): boolean {
+  for (const group of ["cond", "drone_cond"]) {
+    const fields = placed.fields[group];
+    if (typeof fields !== "object" || fields === null) continue;
+    const measure = (fields as Record<string, unknown>)["measure_var"];
+    if (typeof measure === "string" && measure.length > 0) return true;
+  }
+  return false;
 }
 
 /** Text attached to a label/jump/jump_sub, i.e. the name it refers to. */
@@ -112,6 +146,41 @@ export function verify(
         want.blacklist[row] ?? [],
         "blacklist",
       );
+    }
+  }
+
+  // ProgWidgetInventoryBase.addErrors: a widget with accessible sides refuses
+  // to run unless at least one is selected. The mask has to be here even when
+  // the source never mentioned sides — ≤1.20.4 reads a missing key as "off"
+  // rather than leaving the widget's own default alone.
+  for (let i = 0; i < placed.length; i++) {
+    const spec = getWidget(placed[i]!.type);
+    for (const path of sidesPaths(spec.fields)) {
+      const mask = readPath(placed[i]!.fields, path);
+      if (typeof mask === "number" && mask !== 0) continue;
+      issues.push({
+        kind: "invalid-structure",
+        widget: i,
+        message:
+          `${describe(placed[i]!, i)} selects no side (${path.join(".")}), ` +
+          `which the game refuses to run`,
+      });
+    }
+  }
+
+  // ProgWidget.addErrors: a widget that starts a chain rather than continuing
+  // one — a label or the start widget — must have something under it, or the
+  // Programmer reports "no piece connected". An empty chain is never useful
+  // anyway, since ending one is what running off the end already does.
+  for (let i = 0; i < placed.length; i++) {
+    const spec = getWidget(placed[i]!.type);
+    if (spec.hasStepInput || !spec.hasStepOutput) continue;
+    if (linked.widgets[i]!.next < 0) {
+      issues.push({
+        kind: "invalid-structure",
+        widget: i,
+        message: `${describe(placed[i]!, i)} has no widget under it, so it starts a chain that does nothing`,
+      });
     }
   }
 
@@ -203,6 +272,19 @@ export function verify(
         kind: "invalid-structure",
         widget: i,
         message: `${describe(placed[i]!, i)} sets both branch targets and also has a widget below it`,
+      });
+    }
+    // A condition naming no target at all is the mirror-image fault: the game
+    // reports "no side active"-style flow-control error, and at runtime
+    // ProgWidgetJump sends BOTH outcomes to the widget below, so the true
+    // branch's code would run whatever the condition said.
+    if (branches === 0 && !hasMeasureVar(placed[i]!)) {
+      issues.push({
+        kind: "invalid-structure",
+        widget: i,
+        message:
+          `${describe(placed[i]!, i)} names no target on either branch, so both ` +
+          `outcomes fall through to the widget below`,
       });
     }
   }

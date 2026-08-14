@@ -86,7 +86,9 @@ describe("relink", () => {
         {
           widgets: [
             widget("start"),
-            widget("inventory_import", {}, {
+            // Sides are named the way the builtins layer always names them: a
+            // sided widget with no face selected is one the game refuses.
+            widget("inventory_import", { inv: { sides: 1 << 1 } }, {
               params: [[area([100, 64, 200], undefined, box)], [param("item_filter", {
                 chk_item: { id: "minecraft:cobblestone" },
               })]],
@@ -264,7 +266,11 @@ describe("build", () => {
         {
           widgets: [
             widget("start"),
-            widget("inventory_import", {}, { params: [[area([0, 64, 0], undefined, box)]] }),
+            // UP is the widget's own default, so 1.21 leaves it out and lets
+            // the codec supply it — but the group itself must still be written.
+            widget("inventory_import", { inv: { sides: 1 << 1 } }, {
+              params: [[area([0, 64, 0], undefined, box)]],
+            }),
           ],
         },
       ],

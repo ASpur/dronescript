@@ -54,9 +54,26 @@ export class ConstEvaluator {
       case "binary": {
         const left = this.eval(expr.left);
         const right = this.eval(expr.right);
-        if (left?.kind !== "int" || right?.kind !== "int") return undefined;
-        const value = foldInt(expr.op, left.value, right.value);
-        return value === undefined ? undefined : { kind: "int", value };
+        if (left?.kind === "int" && right?.kind === "int") {
+          const value = foldInt(expr.op, left.value, right.value);
+          return value === undefined ? undefined : { kind: "int", value };
+        }
+        // Coordinates fold for + and -, with an int operand read as <n, 0, 0>
+        // — exactly what the runtime coordinate operator would compute, so a
+        // constant expression costs no widget. * and / are left to the widget:
+        // its component-wise semantics on mixed operands are a trap, not a
+        // constant worth replicating.
+        if ((expr.op === "+" || expr.op === "-") && (left?.kind === "coord" || right?.kind === "coord")) {
+          const a = asCoord(left);
+          const b = asCoord(right);
+          if (!a || !b) return undefined;
+          const sign = expr.op === "+" ? 1 : -1;
+          return {
+            kind: "coord",
+            value: [a[0] + sign * b[0], a[1] + sign * b[1], a[2] + sign * b[2]],
+          };
+        }
+        return undefined;
       }
       case "call":
         return this.evalCall(expr);
@@ -281,6 +298,12 @@ export class ConstEvaluator {
 
 function findOption(options: ObjectLiteral | undefined, name: string): Expr | undefined {
   return options?.properties.find((p) => p.name === name)?.value;
+}
+
+function asCoord(value: CompileValue | undefined): readonly [number, number, number] | undefined {
+  if (value?.kind === "coord") return value.value;
+  if (value?.kind === "int") return [value.value, 0, 0];
+  return undefined;
 }
 
 function foldInt(op: string, a: number, b: number): number | undefined {

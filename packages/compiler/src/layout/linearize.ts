@@ -65,7 +65,7 @@ function linearizeRoutine(
       // At most one real predecessor means no other path needs to reach this
       // block, so it needs no label and can simply sit below. A count of zero
       // happens when the only way in is through collapsed empty blocks.
-      at = fallThroughCandidates(block.terminator, resolve).find(
+      at = fallThroughCandidates(block.terminator, resolve, endsChain).find(
         (candidate) =>
           !placed.has(candidate) &&
           candidate !== routine.entry &&
@@ -254,16 +254,28 @@ function countPredecessors(
  * true branch on the widget's whitelist side, which reads the way the source
  * does, but in a chain of `&&` the true side is the continuation — so if false
  * is unavailable, taking true still saves a jump widget.
+ *
+ * A side is only offered when its *sibling* can be named, though. Whatever is
+ * placed below a condition is where an unnamed side goes, so the sibling has to
+ * carry a label — and a side that merely ends the routine has nothing to name.
+ * Letting such a condition fall through would run the branch either way.
  */
 function fallThroughCandidates(
   terminator: Terminator,
   resolve: (id: BlockId) => BlockId,
+  endsChain: (id: BlockId) => boolean,
 ): BlockId[] {
   switch (terminator.kind) {
     case "jump":
       return [resolve(terminator.to)];
-    case "cond":
-      return [resolve(terminator.ifFalse), resolve(terminator.ifTrue)];
+    case "cond": {
+      const onTrue = resolve(terminator.ifTrue);
+      const onFalse = resolve(terminator.ifFalse);
+      const candidates: BlockId[] = [];
+      if (!endsChain(onTrue) || onTrue === onFalse) candidates.push(onFalse);
+      if (!endsChain(onFalse) || onTrue === onFalse) candidates.push(onTrue);
+      return candidates;
+    }
     case "call":
     case "foreach":
       return [resolve(terminator.cont)];
@@ -330,6 +342,16 @@ function emitTerminator(
     case "cond": {
       const onTrue = resolve(terminator.ifTrue);
       const onFalse = resolve(terminator.ifFalse);
+
+      // Outcomes that go to the same place, or that both just end the routine,
+      // make the branch decide nothing. Dropping the widget is what the source
+      // meant and costs nothing to run; keeping it would leave a condition the
+      // game marks as having no flow control.
+      if (endsChain(onTrue) && endsChain(onFalse)) return [];
+      if (onTrue === onFalse) {
+        return onTrue === next ? [] : [jumpTo(labelFor(layout, onTrue))];
+      }
+
       const spec = getWidget(terminator.node.type);
       const branchRow = spec.params.length - 1;
 
@@ -339,13 +361,21 @@ function emitTerminator(
       while (blacklist.length <= branchRow) blacklist.push([]);
 
       // Each side that is not the fall-through gets its target written into the
-      // widget itself — one text widget, versus two for a jump. A side that only
-      // leads to the end of the routine is left empty instead: a condition
-      // always ends its chain, so falling through there already ends the chain.
-      const needsTarget = (target: BlockId) =>
-        target !== next && !endsChain(target);
-      if (needsTarget(onTrue)) params[branchRow] = [text(labelFor(layout, onTrue))];
-      if (needsTarget(onFalse)) blacklist[branchRow] = [text(labelFor(layout, onFalse))];
+      // widget itself — one text widget, versus two for a jump.
+      //
+      // An empty side does NOT mean "stop here": ProgWidgetJump.jumpToLabel
+      // falls back to the widget *below* the condition when a side names no
+      // label, so an empty side runs whatever sits underneath. That is only the
+      // right thing when the side ends the routine and nothing is below — which
+      // trace formation guarantees, by refusing to place anything below a
+      // condition whose other side merely ends (see fallThroughCandidates).
+      const targetFor = (target: BlockId): string | undefined =>
+        target === next || endsChain(target) ? undefined : labelFor(layout, target);
+
+      const onTrueTarget = targetFor(onTrue);
+      const onFalseTarget = targetFor(onFalse);
+      if (onTrueTarget !== undefined) params[branchRow] = [text(onTrueTarget)];
+      if (onFalseTarget !== undefined) blacklist[branchRow] = [text(onFalseTarget)];
 
       return [{ ...terminator.node, params, blacklist }];
     }

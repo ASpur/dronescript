@@ -93,6 +93,26 @@ describe("1.20.4 target", () => {
     expect(variable["var2"]).toEqual({ type: 8, value: "$owner_pos" });
   });
 
+  it("names the accessible sides even when the call does not", () => {
+    // The same shape of trap as pos2: ProgWidgetInventoryBase.readFromNBT
+    // assigns all six side flags straight from the tag, so a missing key reads
+    // as false rather than leaving the widget's own UP default alone. Omitting
+    // them would import a widget with no side active, which the game refuses
+    // to run.
+    const importer = widgets(ok(`importLiquid(<1, 2, 3>);`)).find(
+      (w) => w["name"].value === "liquid_import",
+    )!;
+    expect(importer["UP"]).toEqual({ type: 1, value: 1 });
+
+    // emitRedstone keeps its sides at top level, and defaults to every side.
+    const redstone = widgets(ok(`emitRedstone(15);`)).find(
+      (w) => w["name"].value === "emit_redstone",
+    )!;
+    for (const side of ["DOWN", "UP", "NORTH", "SOUTH", "WEST", "EAST"]) {
+      expect(redstone[side]).toEqual({ type: 1, value: 1 });
+    }
+  });
+
   it("flattens the grouped fields the newer format nests", () => {
     const result = ok(`
       const chest = area(<0, 64, 0>);

@@ -14,11 +14,13 @@
 
   interface Props {
     value: string;
+    /** Past snapshots ending at `value`, replayed into the undo stack. */
+    history?: readonly string[];
     diagnostics: readonly Diagnostic[];
     onchange: (value: string) => void;
   }
 
-  let { value = $bindable(), diagnostics, onchange }: Props = $props();
+  let { value = $bindable(), history = [], diagnostics, onchange }: Props = $props();
 
   let container: HTMLDivElement;
   let editor: monaco.editor.IStandaloneCodeEditor | undefined = $state();
@@ -64,13 +66,43 @@
       tabSize: 2,
     });
 
+    // Monaco cannot serialize its undo stack, so rebuild one: start from the
+    // oldest snapshot and push a full-document edit per step. Ctrl+Z then
+    // walks back through pauses from before the refresh. This runs before the
+    // change listener attaches — it ends where `value` already is, and the
+    // intermediate states must not trigger compiles or be re-recorded.
+    const model = editor.getModel()!;
+    if (history.length > 1) {
+      model.setValue(history[0]!);
+      for (const snapshot of history.slice(1)) {
+        model.pushStackElement();
+        model.pushEditOperations(
+          null,
+          [{ range: model.getFullModelRange(), text: snapshot }],
+          () => null,
+        );
+      }
+      model.pushStackElement();
+    }
+
     editor.onDidChangeModelContent(() => {
       const next = editor!.getValue();
       value = next;
       onchange(next);
     });
 
-    return () => editor?.dispose();
+    // Monaco measures glyph widths at creation, and Monocraft is a swapped-in
+    // webfont — on a cold cache the editor measures the fallback face, and the
+    // cursor and clicks land at the fallback's coordinates. Remeasure when the
+    // fonts settle (and on any later load, e.g. the bold face arriving).
+    const remeasure = () => monaco.editor.remeasureFonts();
+    document.fonts.ready.then(remeasure);
+    document.fonts.addEventListener("loadingdone", remeasure);
+
+    return () => {
+      document.fonts.removeEventListener("loadingdone", remeasure);
+      editor?.dispose();
+    };
   });
 
   // Push the compiler's diagnostics into the gutter as markers.

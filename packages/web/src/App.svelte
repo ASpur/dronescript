@@ -13,7 +13,55 @@
   import type { CompileRequest, CompileResponse } from "./lib/compile.worker.js";
   import { EXAMPLES } from "./lib/examples.js";
 
-  const INITIAL_SOURCE = EXAMPLES[0]!.source;
+  // ?? not ||: an emptied editor should stay empty across a refresh.
+  const INITIAL_SOURCE = localStorage.getItem("ds.source") ?? EXAMPLES[0]!.source;
+
+  // ------------------------------------------------------------------
+  // Undo history: snapshots taken at typing pauses, replayed into Monaco's
+  // undo stack on the next visit so Ctrl+Z reaches back across refreshes.
+  // Bounded from the front so storage stays far under quota.
+  // ------------------------------------------------------------------
+  const HISTORY_MAX_STEPS = 100;
+  const HISTORY_MAX_CHARS = 400_000;
+
+  function storedHistory(): string[] {
+    try {
+      const parsed: unknown = JSON.parse(localStorage.getItem("ds.history") ?? "[]");
+      if (Array.isArray(parsed) && parsed.every((step) => typeof step === "string")) {
+        // The stack must end at what the editor will show, or the first
+        // undo after a refresh would jump to some unrelated older text.
+        if (parsed.at(-1) !== INITIAL_SOURCE) parsed.push(INITIAL_SOURCE);
+        return parsed;
+      }
+    } catch {
+      // Corrupt storage reads as no history.
+    }
+    return [INITIAL_SOURCE];
+  }
+
+  const INITIAL_HISTORY = storedHistory();
+  const history = [...INITIAL_HISTORY];
+
+  function recordSnapshot(snapshot: string): void {
+    if (history.at(-1) === snapshot) return;
+    history.push(snapshot);
+    while (
+      history.length > HISTORY_MAX_STEPS ||
+      (history.length > 1 && history.reduce((n, step) => n + step.length, 0) > HISTORY_MAX_CHARS)
+    ) {
+      history.shift();
+    }
+    try {
+      localStorage.setItem("ds.history", JSON.stringify(history));
+    } catch {
+      // Out of quota: losing history beats breaking typing.
+    }
+  }
+
+  function storedTarget(): Target {
+    const stored = localStorage.getItem("ds.target");
+    return TARGETS.some((t) => t.id === stored) ? (stored as Target) : DEFAULT_TARGET;
+  }
 
   let source = $state(INITIAL_SOURCE);
   let result: CompileResult | undefined = $state();
@@ -29,7 +77,9 @@
   });
   let copied = $state(false);
   let editor: Editor | undefined = $state();
-  let target: Target = $state(DEFAULT_TARGET);
+  let target: Target = $state(storedTarget());
+  // Programmable Controller mode: same program, stricter set of pieces.
+  let controller = $state(localStorage.getItem("ds.controller") === "1");
 
   // ------------------------------------------------------------------
   // Side panel: resizable via the splitter, collapsible to a rail, both
@@ -149,6 +199,7 @@
       id: ++pending,
       source: next,
       target,
+      controller,
       // Snapshot: a $state proxy cannot survive structured clone.
       offsets: hasOffsets ? $state.snapshot(chainOffsets) : undefined,
     };
@@ -157,16 +208,31 @@
 
   function changeTarget(event: Event): void {
     target = (event.currentTarget as HTMLSelectElement).value as Target;
+    localStorage.setItem("ds.target", target);
     // The two versions serialize differently, so recompile rather than reuse.
     requestCompile(source);
   }
 
-  // Compile as the program is typed, on a short debounce.
+  function changeController(event: Event): void {
+    controller = (event.currentTarget as HTMLInputElement).checked;
+    localStorage.setItem("ds.controller", controller ? "1" : "0");
+    requestCompile(source);
+  }
+
+  // Compile as the program is typed, on a short debounce. The save is not
+  // debounced with it — a refresh inside the debounce window must not lose
+  // the last keystrokes.
   let timer: ReturnType<typeof setTimeout> | undefined;
+  // Snapshots wait for a longer pause than compiles do, so one undo step
+  // covers a burst of typing rather than every few keystrokes.
+  let historyTimer: ReturnType<typeof setTimeout> | undefined;
   function onchange(next: string): void {
     source = next;
+    localStorage.setItem("ds.source", next);
     clearTimeout(timer);
     timer = setTimeout(() => requestCompile(next), 150);
+    clearTimeout(historyTimer);
+    historyTimer = setTimeout(() => recordSnapshot(next), 500);
   }
 
   // Compile once at startup; every later compile comes from onchange.
@@ -183,6 +249,15 @@
     await navigator.clipboard.writeText(result.text);
     copied = true;
     setTimeout(() => (copied = false), 1600);
+  }
+
+  function downloadSource(): void {
+    const url = URL.createObjectURL(new Blob([source], { type: "text/plain" }));
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "program.drn";
+    anchor.click();
+    URL.revokeObjectURL(url);
   }
 
   function loadExample(event: Event): void {
@@ -207,12 +282,23 @@
           </option>
         {/each}
       </select>
+      <label
+        class="toggle"
+        class:on={controller}
+        title="Compile for a Programmable Controller: it refuses a program containing any of seven pieces, and a few others mean something else in a block."
+      >
+        <input type="checkbox" checked={controller} onchange={changeController} />
+        Controller
+      </label>
       <select onchange={loadExample} aria-label="Load an example">
         <option value="">Examples…</option>
         {#each EXAMPLES as example (example.name)}
           <option value={example.name}>{example.name}</option>
         {/each}
       </select>
+      <button onclick={downloadSource} title="Save the source as a .drn file">
+        Download .drn
+      </button>
       <button class="primary" onclick={copyJson} disabled={!canExport}>
         {copied ? "Copied" : "Copy program JSON"}
       </button>
@@ -227,6 +313,7 @@
       <Editor
         bind:this={editor}
         bind:value={source}
+        history={INITIAL_HISTORY}
         diagnostics={result?.diagnostics ?? []}
         {onchange}
       />
@@ -300,12 +387,17 @@
     </section>
   </main>
 
-  <footer class:bad={errors.length > 0 || issues.length > 0}>
+  <footer
+    class:bad={errors.length > 0 || issues.length > 0}
+    class:warn={errors.length === 0 && issues.length === 0 && warnings.length > 0}
+  >
     <span class="status eyebrow">
       {#if errors.length > 0}
         {errors.length} error{errors.length === 1 ? "" : "s"}
       {:else if issues.length > 0}
         Bad output
+      {:else if warnings.length > 0}
+        {warnings.length} warning{warnings.length === 1 ? "" : "s"}
       {:else}
         OK
       {/if}
@@ -328,11 +420,20 @@
           <li>{issue.message}</li>
         {/each}
       </ul>
+    {:else if warnings.length > 0}
+      <!-- The program is exportable; these say what it will do once imported. -->
+      <ul class="messages">
+        {#each warnings.slice(0, 8) as diagnostic (diagnostic.span.start + diagnostic.code)}
+          <li>
+            <span class="where">line {diagnostic.span.line}</span>
+            {diagnostic.message}
+          </li>
+        {/each}
+      </ul>
     {:else}
       <span class="ok">
-        Compiled cleanly{warnings.length > 0 ? ` with ${warnings.length} warning(s)` : ""}. Copy
-        the JSON, then in game open the Programmer, click the pastebin button, and choose “Load
-        code from clipboard”.
+        Compiled cleanly. Copy the JSON, then in game open the Programmer, click the pastebin
+        button, and choose “Load code from clipboard”.
       </span>
     {/if}
   </footer>
@@ -392,6 +493,39 @@
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
+  }
+
+  /* Sits in the same row as the selects, so it carries their height and box.
+     Checked, it takes the accent wash — the mode is worth seeing at a glance. */
+  .toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: 28px;
+    padding: 0 8px;
+    border: 1px solid var(--line-strong);
+    border-radius: 4px;
+    background: var(--surface);
+    color: var(--fg-subtle);
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .toggle:hover {
+    background: var(--surface-raised);
+    color: var(--fg);
+  }
+
+  .toggle.on {
+    color: var(--info);
+    border-color: color-mix(in srgb, var(--info) 45%, transparent);
+    background: color-mix(in srgb, var(--info) 12%, var(--surface));
+  }
+
+  .toggle input {
+    accent-color: var(--info);
+    margin: 0;
+    cursor: pointer;
   }
 
   /* The one call to action on the page, tinted the way the accent is used
@@ -587,10 +721,22 @@
     color: var(--bad);
   }
 
+  /* Warnings still export, so they get their own colour rather than the
+     red that means "this will not load". */
+  footer.warn .status {
+    border-color: color-mix(in srgb, var(--warn) 45%, transparent);
+    background: color-mix(in srgb, var(--warn) 14%, transparent);
+    color: var(--warn);
+  }
+
   .messages {
     margin: 0;
     padding-left: 16px;
     color: var(--bad);
+  }
+
+  footer.warn .messages {
+    color: var(--warn);
   }
 
   .where {

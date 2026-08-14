@@ -34,6 +34,7 @@ import { ALL_AXES, DIRECTIONS, encodeSides } from "../spec/widgets.js";
 import type { DirectionName } from "../spec/widgets.js";
 import { getBuiltin, getSensor } from "../spec/builtins.js";
 import type { BuiltinSpec, FieldBinding, SensorVariants } from "../spec/builtins.js";
+import { controllerNote } from "../spec/controller.js";
 import { ConstEvaluator } from "../sema/consteval.js";
 import type { CompileValue } from "../sema/values.js";
 import { describeValue, isSpecialVariable, scopeOf } from "../sema/values.js";
@@ -70,6 +71,11 @@ export interface LowerResult {
   readonly program: IrProgram;
 }
 
+export interface LowerOptions {
+  /** Hold the program to what a Programmable Controller can run. */
+  readonly controller?: boolean;
+}
+
 export class Lowerer {
   private readonly builder = new BlockBuilder();
   private readonly routines: Routine[] = [];
@@ -87,7 +93,23 @@ export class Lowerer {
   private readonly callCounts = new Map<string, number>();
   private readonly inlining: string[] = [];
 
-  constructor(private readonly diagnostics: DiagnosticBag) {}
+  constructor(
+    private readonly diagnostics: DiagnosticBag,
+    private readonly options: LowerOptions = {},
+  ) {}
+
+  /**
+   * Report what a Programmable Controller would make of this call. Every widget
+   * built from a builtin passes through here, so a piece the controller refuses
+   * cannot slip out via a sensor or a condition.
+   */
+  private checkController(builtin: BuiltinSpec, span: Span): void {
+    if (!this.options.controller) return;
+    const note = controllerNote(builtin);
+    if (!note) return;
+    if (note.severity === "error") this.diagnostics.error(note.code, note.message, span);
+    else this.diagnostics.warn(note.code, note.message, span);
+  }
 
   lower(file: SourceFile): LowerResult {
     for (const item of file.body) {
@@ -568,17 +590,26 @@ export class Lowerer {
   private foldOperands(
     expr: Expr,
   ): { op: "plus_minus" | "multiply_divide"; whitelist: WidgetNode[]; blacklist: WidgetNode[] } | undefined {
+    // The top-level operator picks the widget; an operand from the other
+    // class becomes its own temp via operandOf, so `a + b * c` is two
+    // widgets. Choosing by inspection (rather than trying additive first)
+    // matters: the additive walk would otherwise see `b * c` as one leaf and
+    // ask operandOf to materialize it — or, for a top-level `a * b`, recurse
+    // into folding the very expression it was asked about.
+    if (expr.kind === "binary" && (expr.op === "*" || expr.op === "/")) {
+      const multiplicative = this.collect(expr, "*", "/");
+      if (multiplicative && multiplicative.positive.length > 0) {
+        return {
+          op: "multiply_divide",
+          whitelist: multiplicative.positive,
+          blacklist: multiplicative.negative,
+        };
+      }
+      return undefined;
+    }
     const additive = this.collect(expr, "+", "-");
     if (additive && additive.positive.length > 0) {
       return { op: "plus_minus", whitelist: additive.positive, blacklist: additive.negative };
-    }
-    const multiplicative = this.collect(expr, "*", "/");
-    if (multiplicative && multiplicative.positive.length > 0) {
-      return {
-        op: "multiply_divide",
-        whitelist: multiplicative.positive,
-        blacklist: multiplicative.negative,
-      };
     }
     return undefined;
   }
@@ -626,7 +657,33 @@ export class Lowerer {
       return undefined;
     }
 
+    if (expr.kind === "binary" && isArithmetic(expr.op)) {
+      const tmp = this.materializeArithmetic(expr);
+      return tmp ? coordinate(tmp) : undefined;
+    }
+
     return undefined;
+  }
+
+  /**
+   * Compute a runtime arithmetic expression into a fresh temp variable, so it
+   * can appear inline where a widget wants a single coordinate — as in
+   * `goto(refuelTarget + <0,1,0>)`. The operator widget lands just before the
+   * widget that reads the temp, which is what makes the inline form exactly
+   * as many pieces as writing the assignment out by hand.
+   */
+  private materializeArithmetic(expr: Expr): string | undefined {
+    const folded = this.foldOperands(expr);
+    if (!folded) return undefined;
+    const tmp = this.temp();
+    this.emit(
+      widget(
+        "coordinate_operator",
+        { var: tmp, coord_op: folded.op, axis_options: ALL_AXES },
+        { params: [folded.whitelist], blacklist: [folded.blacklist] },
+      ),
+    );
+    return tmp;
   }
 
   // --- Expression statements ----------------------------------------------
@@ -667,7 +724,9 @@ export class Lowerer {
       return;
     }
     if (builtin.name === "suicide") {
-      // Not an ordinary widget: nothing can follow it, so it is a terminator.
+      // Not an ordinary widget: nothing can follow it, so it is a terminator,
+      // and it never reaches buildActionWidget's controller check.
+      this.checkController(builtin, expr.span);
       if (expr.args.length > 0 || expr.options) {
         this.diagnostics.error("arity", "suicide() takes no arguments or options", expr.span);
       }
@@ -1089,6 +1148,8 @@ export class Lowerer {
     call: Call,
     condition?: { operator?: RawOperator; count?: number; measureInto?: string },
   ): WidgetNode | undefined {
+    this.checkController(builtin, call.span);
+
     const fields: Record<string, unknown> = {};
     const params: WidgetNode[][] = [];
     const blacklist: WidgetNode[][] = [];
@@ -1237,6 +1298,18 @@ export class Lowerer {
         },
       ];
     }
+    // Inline arithmetic: computed into a temp just before the widget that
+    // uses it, then read back as a single-block area.
+    if (expr.kind === "binary" && isArithmetic(expr.op)) {
+      const tmp = this.materializeArithmetic(expr);
+      if (!tmp) return undefined;
+      return [
+        {
+          type: "area",
+          fields: { var1: tmp, var2: tmp, area_type: { type: "box" } },
+        },
+      ];
+    }
     // A runtime coordinate variable becomes a single-block area.
     if (expr.kind === "ident") {
       const scope = scopeOf(expr.name);
@@ -1340,6 +1413,16 @@ export class Lowerer {
           }
           sides.push(side.value as DirectionName);
         }
+        // Every sided widget errors in the Programmer with "no side active"
+        // when none is selected, so an empty selection can never be meant.
+        if (sides.length === 0) {
+          this.diagnostics.error(
+            "no-side",
+            `${builtinName}.${field.option} needs at least one side — the game rejects the widget with "no side active". Omit the option to use the widget's default.`,
+            expr.span,
+          );
+          return undefined;
+        }
         return encodeSides(sides);
       }
     }
@@ -1395,6 +1478,10 @@ function calleeName(call: Call): string | undefined {
 
 function isComparison(op: string): boolean {
   return ["==", "!=", "<", "<=", ">", ">="].includes(op);
+}
+
+function isArithmetic(op: string): op is "+" | "-" | "*" | "/" {
+  return op === "+" || op === "-" || op === "*" || op === "/";
 }
 
 /**

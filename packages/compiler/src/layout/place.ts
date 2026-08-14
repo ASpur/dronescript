@@ -148,7 +148,10 @@ class Placer {
   /**
    * Record the links that hold a parameter chain together. Each element sits in
    * the previous one's own slot-0 position, so the game links them to each other
-   * as well as linking the chain head to its owner.
+   * as well as linking the chain head to its owner. The verifier walks each
+   * element's chain transitively, so every element's intent must carry the whole
+   * remaining suffix — just the immediate neighbour would read as a mismatch for
+   * any chain of three or more.
    */
   private linkChainElements(indices: readonly number[]): void {
     for (let i = 0; i + 1 < indices.length; i++) {
@@ -159,7 +162,7 @@ class Placer {
             `express the whole chain as one list instead`,
         );
       }
-      link.params[0] = [indices[i + 1]!];
+      link.params[0] = indices.slice(i + 1);
     }
   }
 

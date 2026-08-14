@@ -10,6 +10,8 @@ export interface CompileRequest {
   readonly id: number;
   readonly source: string;
   readonly target: Target;
+  /** Compile for a Programmable Controller rather than a drone. */
+  readonly controller?: boolean;
   /** User drags, keyed by chain signature — applied after layout, re-verified. */
   readonly offsets?: ChainOffsets;
 }
@@ -22,8 +24,8 @@ export interface CompileResponse {
 }
 
 self.onmessage = (event: MessageEvent<CompileRequest>) => {
-  const { id, source, target, offsets } = event.data;
-  let result = compile(source, { target, tolerateIssues: true });
+  const { id, source, target, controller, offsets } = event.data;
+  let result = compile(source, { target, controller, tolerateIssues: true });
 
   // Rearranged chains re-verify and re-emit exactly the way build() does, so
   // the JSON tab and the export button always describe the moved layout.

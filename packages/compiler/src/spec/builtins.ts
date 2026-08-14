@@ -14,6 +14,7 @@
  * entry, sharing a name and discriminated by `subject`.
  */
 
+import { ALL_SIDES, DEFAULT_INV_SIDES } from "./widgets.js";
 import type { ParamType } from "./types.js";
 
 /** Where a parameter row's contents come from in the call. */
@@ -97,11 +98,17 @@ const DRONE_CONDITION: ConditionPaths = {
   andFunction: ["drone_cond", "and_func"],
 };
 
+// The mask is ALWAYS written, even when the call names no sides. On ≤1.20.4
+// `ProgWidgetInventoryBase.readFromNBT` assigns all six flags unconditionally
+// from the tag, so a missing key reads as false rather than "unset" — omitting
+// the field would wipe the widget's own UP default and leave the drone with no
+// side active, which the game refuses to run. Same trap as an area's pos2.
 const SIDES_FIELD: FieldBinding = {
   option: "sides",
   path: ["inv", "sides"],
   kind: "sides",
-  doc: 'Faces of the target block the drone may work through, e.g. ["up", "north"].',
+  fallback: DEFAULT_INV_SIDES,
+  doc: 'Faces of the target block the drone may work through, e.g. ["up", "north"]. At least one; defaults to up.',
 };
 const COUNT_FIELD: FieldBinding = {
   option: "count",
@@ -593,7 +600,10 @@ export const BUILTINS: readonly BuiltinSpec[] = [
       {
         ...SIDES_FIELD,
         path: ["sides"],
-        doc: "Which of the drone's sides emit the signal.",
+        // ProgWidgetEmitRedstone reads its sides the same unconditional way,
+        // but its own default is every side rather than UP.
+        fallback: ALL_SIDES,
+        doc: "Which of the drone's sides emit the signal. At least one; defaults to all six.",
       },
     ],
     summary: "Emit a redstone signal. The strength must be a constant.",
@@ -670,6 +680,7 @@ export const BUILTINS: readonly BuiltinSpec[] = [
     widget: "condition_block",
     params: [...areaRow(0, 0), ...itemFilterRow(1)],
     fields: [
+      SIDES_FIELD,
       {
         option: "checkAir",
         path: ["check_air"],
@@ -702,7 +713,7 @@ export const BUILTINS: readonly BuiltinSpec[] = [
     subject: "area",
     widget: "condition_light",
     params: [...areaRow(0, 0)],
-    fields: [],
+    fields: [SIDES_FIELD],
     condition: WORLD_CONDITION,
     branchRow: 1,
     summary: "Read the light level in an area.",
@@ -712,7 +723,7 @@ export const BUILTINS: readonly BuiltinSpec[] = [
     subject: "area",
     widget: "condition_pressure",
     params: [...areaRow(0, 0)],
-    fields: [],
+    fields: [SIDES_FIELD],
     condition: WORLD_CONDITION,
     branchRow: 1,
     summary: "Read the pressure of machines in an area, in bar.",
@@ -722,7 +733,7 @@ export const BUILTINS: readonly BuiltinSpec[] = [
     subject: "area",
     widget: "condition_rf",
     params: [...areaRow(0, 0)],
-    fields: [],
+    fields: [SIDES_FIELD],
     condition: WORLD_CONDITION,
     branchRow: 1,
     summary: "Read stored energy in an area — as a percentage, unlike rf(drone).",
@@ -732,7 +743,7 @@ export const BUILTINS: readonly BuiltinSpec[] = [
     subject: "area",
     widget: "condition_entity",
     params: [...areaRow(0, 0), ...entityFilterRow(1)],
-    fields: [],
+    fields: [SIDES_FIELD],
     condition: WORLD_CONDITION,
     branchRow: 2,
     summary: "Count entities in an area.",
