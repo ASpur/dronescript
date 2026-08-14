@@ -12,7 +12,7 @@
 // case sensitively, since only * and ? are wildcards.
 
 while (true) {
-  if (drone.entities({entities: "\"oozeboy\""}) == 0) {
+  if (entities(drone, {entities: "\"oozeboy\""}) == 0) {
     // An area is defined by two corners and a box has no "expand" setting, so
     // reaching a block out in every direction means computing both of them.
     coord sweepLo = $drone_pos - <1, 1, 1>;

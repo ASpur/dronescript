@@ -218,11 +218,6 @@ class Parser {
           const end = this.expect(";");
           return { kind: "continue", span: spanOf(t.span, end.span) };
         }
-        case "halt": {
-          this.advance();
-          const end = this.expect(";");
-          return { kind: "halt", span: spanOf(t.span, end.span) };
-        }
         case "return": {
           this.advance();
           const value = this.at(";") ? undefined : this.parseExpression();
@@ -510,6 +505,12 @@ class Parser {
     if (t.kind === "keyword" && (t.value === "true" || t.value === "false")) {
       this.advance();
       return { kind: "bool", value: t.value === "true", span: t.span };
+    }
+    // `drone` is a keyword so no variable can shadow it, but it reads like an
+    // identifier: the sensor subject in calls like pressure(drone).
+    if (t.kind === "keyword" && t.value === "drone") {
+      this.advance();
+      return { kind: "ident", name: "drone", span: t.span };
     }
     if (this.at("(")) {
       this.advance();

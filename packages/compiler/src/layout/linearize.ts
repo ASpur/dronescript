@@ -268,7 +268,7 @@ function fallThroughCandidates(
     case "foreach":
       return [resolve(terminator.cont)];
     case "end":
-    case "halt":
+    case "suicide":
       return [];
   }
 }
@@ -309,7 +309,7 @@ function emitTerminator(
       // Running off the end of a chain returns from a subroutine, or restarts
       // the program at the start widget.
       return [];
-    case "halt":
+    case "suicide":
       return [widget("suicide")];
     case "jump": {
       const to = resolve(terminator.to);

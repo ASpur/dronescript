@@ -116,7 +116,7 @@ describe("1.20.4 target", () => {
   });
 
   it("stores a condition operator as a byte ordinal and flattens its count", () => {
-    const result = ok(`if (drone.pressure() >= 5) { wait(1); }`);
+    const result = ok(`if (pressure(drone) >= 5) { wait(1); }`);
     const cond = widgets(result).find((w) => w["name"].value === "drone_condition_pressure")!;
     // Operator: EQ, GE, LE
     expect(cond["operator"]).toEqual({ type: 1, value: 1 });

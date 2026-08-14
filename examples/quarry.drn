@@ -15,15 +15,15 @@ void unload() {
 
 while (true) {
   // Bail out before the drone strands itself with no pressure.
-  if (drone.pressure() <= 1) {
+  if (pressure(drone) <= 1) {
     unload();
-    halt;
+    suicide();
   }
 
   dig(pit, {except: junk, order: "highToLow"});
 
   // A full drone cannot pick anything else up, so make a delivery run.
-  if (drone.items() >= 64) {
+  if (items(drone) >= 64) {
     unload();
   }
 

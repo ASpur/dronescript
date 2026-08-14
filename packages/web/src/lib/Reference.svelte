@@ -39,8 +39,8 @@
       doc.name,
       doc.signature,
       doc.summary,
-      ...doc.parameters.flatMap((o) => [o.name, o.type]),
-      ...doc.options.flatMap((o) => [o.name, o.type]),
+      ...doc.parameters.flatMap((o) => [o.name, o.type, o.doc]),
+      ...doc.options.flatMap((o) => [o.name, o.type, o.doc]),
     ]
       .join(" ")
       .toLowerCase();
@@ -94,21 +94,30 @@
 
   let flashing = $state<string>();
 
+  /** A name may have one entry per sensor subject; land on the first. */
+  function keyFor(name: string): string | undefined {
+    for (const key of [name, `${name}(area)`, `${name}(drone)`]) {
+      if (fnEls[key]) return key;
+    }
+    return undefined;
+  }
+
   /** Scroll a function's entry into view, e.g. after a Ctrl+click in the editor. */
   export async function scrollToFunction(name: string): Promise<void> {
-    if (!fnEls[name]) {
+    if (!keyFor(name)) {
       // A search filter may be hiding the entry.
       query = "";
       await tick();
     }
-    const el = fnEls[name];
-    if (!el) return;
+    const key = keyFor(name);
+    const el = key ? fnEls[key] : undefined;
+    if (!key || !el) return;
     el.scrollIntoView({ behavior: "smooth", block: "start" });
     flashing = undefined;
     await tick(); // restart the animation when re-triggered
-    flashing = name;
+    flashing = key;
     setTimeout(() => {
-      if (flashing === name) flashing = undefined;
+      if (flashing === key) flashing = undefined;
     }, 1300);
   }
 </script>
@@ -117,8 +126,8 @@
   <article
     class="fn"
     class:sensor={doc.sensor}
-    class:flash={flashing === doc.name}
-    bind:this={fnEls[doc.name]}
+    class:flash={flashing === doc.key}
+    bind:this={fnEls[doc.key]}
     style:scroll-margin-top={scrollMargin}
   >
     <code class="sig">
@@ -129,7 +138,7 @@
       <div class="opts">
         {#each [...doc.parameters, ...doc.options] as opt (opt.name)}
           <code>{opt.name}</code>
-          <span>{opt.type}</span>
+          <span><em class="type">{opt.type}</em>{opt.doc ? ` — ${opt.doc}` : ""}</span>
         {/each}
       </div>
     {/if}
@@ -220,7 +229,7 @@
     <section bind:this={sections[category.title]} style:scroll-margin-top={scrollMargin}>
       <h3 class="eyebrow">{category.title}</h3>
       {#if category.blurb}<p class="blurb">{category.blurb}</p>{/if}
-      {#each category.entries as doc (doc.name)}
+      {#each category.entries as doc (doc.key)}
         {@render fn(doc)}
       {/each}
     </section>
@@ -422,6 +431,11 @@
   .opts span {
     color: var(--fg-muted);
     overflow-wrap: break-word;
+  }
+
+  .opts .type {
+    font-style: normal;
+    color: var(--fg-subtle);
   }
 
   .limits {

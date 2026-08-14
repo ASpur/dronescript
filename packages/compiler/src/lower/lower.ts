@@ -32,8 +32,8 @@ import type { WidgetNode } from "../emit/model.js";
 import { coordinate, text as textWidget, widget } from "../emit/model.js";
 import { ALL_AXES, DIRECTIONS, encodeSides } from "../spec/widgets.js";
 import type { DirectionName } from "../spec/widgets.js";
-import { getBuiltin } from "../spec/builtins.js";
-import type { BuiltinSpec, FieldBinding } from "../spec/builtins.js";
+import { getBuiltin, getSensor } from "../spec/builtins.js";
+import type { BuiltinSpec, FieldBinding, SensorVariants } from "../spec/builtins.js";
 import { ConstEvaluator } from "../sema/consteval.js";
 import type { CompileValue } from "../sema/values.js";
 import { describeValue, isSpecialVariable, scopeOf } from "../sema/values.js";
@@ -266,10 +266,6 @@ export class Lowerer {
         this.startBlock(this.builder.create());
         return;
       }
-      case "halt":
-        this.current.terminator = { kind: "halt" };
-        this.startBlock(this.builder.create());
-        return;
     }
   }
 
@@ -390,21 +386,41 @@ export class Lowerer {
     this.popScope();
   }
 
-  /** `foreach (c in area)` vs `foreach (it in items(filter))`. */
+  /** `foreach (c in area)` vs `foreach (it in items(drone, {only: f}))`. */
   private buildForEachWidget(
     iterable: Expr,
     varName: string,
     span: Span,
   ): WidgetNode | undefined {
     if (iterable.kind === "call" && iterable.callee.kind === "ident" && iterable.callee.name === "items") {
-      const filterArg = iterable.args[0];
-      const filter = filterArg ? this.constEvaluator().eval(filterArg) : undefined;
-      const chain = filter?.kind === "itemFilter" ? [...filter.chain] : [];
+      const first = iterable.args[0];
+      if (!first || !isDroneSubject(first) || iterable.args.length > 1) {
+        this.diagnostics.error(
+          "foreach-iterable",
+          "foreach iterates the drone's own inventory: items(drone), with an optional {only: filter}",
+          iterable.span,
+        );
+        return undefined;
+      }
+      let chain: WidgetNode[] = [];
+      for (const property of iterable.options?.properties ?? []) {
+        if (property.name !== "only") {
+          this.diagnostics.error(
+            "unknown-option",
+            `items(drone) as a foreach iterable takes only the "only" option`,
+            property.span,
+          );
+          return undefined;
+        }
+        const filters = this.evalFilterList(property.value, "itemFilter", "items");
+        if (!filters) return undefined;
+        chain = filters;
+      }
       return widget("for_each_item", { var: varName }, { params: [chain, []] });
     }
     const area = this.evalAreaOperand(iterable);
     if (!area) {
-      this.diagnostics.error("foreach-iterable", "foreach takes an area, or items(filter)", span);
+      this.diagnostics.error("foreach-iterable", "foreach takes an area, or items(drone)", span);
       return undefined;
     }
     return widget("for_each_coordinate", { var: varName }, { params: [area, []] });
@@ -492,6 +508,14 @@ export class Lowerer {
   }
 
   private resolveVariable(ident: Identifier): VarInfo | undefined {
+    if (ident.name === "drone") {
+      this.diagnostics.error(
+        "drone-subject",
+        `"drone" is not a variable; it names the sensor subject, as in pressure(drone)`,
+        ident.span,
+      );
+      return undefined;
+    }
     const scope = scopeOf(ident.name);
     if (scope !== "local") {
       // Global, server, and special variables are named directly.
@@ -508,6 +532,7 @@ export class Lowerer {
   /** Emit whatever widgets compute `expr` into `target`. */
   private assignTo(target: VarInfo, expr: Expr, span: Span): void {
     const sensor = this.asSensorCall(expr);
+    if (sensor === "failed") return;
     if (sensor) {
       // A sensor in value position measures into the variable and falls through.
       this.emitSensor(sensor.call, sensor.builtin, { measureInto: target.runtimeName });
@@ -608,6 +633,11 @@ export class Lowerer {
 
   private lowerExpressionStatement(expr: Expr): void {
     if (expr.kind !== "call") {
+      if (expr.kind === "ident" && expr.name === "halt") {
+        // The pre-rework spelling of suicide(), once a statement keyword.
+        this.diagnostics.error("unknown-function", `"halt" was replaced by suicide()`, expr.span);
+        return;
+      }
       this.diagnostics.error("useless-statement", "this expression has no effect", expr.span);
       return;
     }
@@ -623,17 +653,26 @@ export class Lowerer {
       return;
     }
 
-    const builtin = getBuiltin(name);
-    if (!builtin) {
-      this.diagnostics.error("unknown-function", `no function named "${name}"`, expr.span);
-      return;
-    }
-    if (builtin.condition) {
+    if (getSensor(name)) {
       this.diagnostics.error(
         "sensor-as-statement",
         `${name}() reads a value; use it in a condition or assign it to a variable`,
         expr.span,
       );
+      return;
+    }
+    const builtin = getBuiltin(name);
+    if (!builtin) {
+      this.diagnostics.error("unknown-function", unknownFunctionMessage(name), expr.span);
+      return;
+    }
+    if (builtin.name === "suicide") {
+      // Not an ordinary widget: nothing can follow it, so it is a terminator.
+      if (expr.args.length > 0 || expr.options) {
+        this.diagnostics.error("arity", "suicide() takes no arguments or options", expr.span);
+      }
+      this.current.terminator = { kind: "suicide" };
+      this.startBlock(this.builder.create());
       return;
     }
     const node = this.buildActionWidget(builtin, expr);
@@ -854,6 +893,7 @@ export class Lowerer {
 
     // A bare sensor call reads as "at least one", matching the widget default.
     const sensor = this.asSensorCall(expr);
+    if (sensor === "failed") return;
     if (sensor) {
       const node = this.emitSensorAsCondition(sensor.call, sensor.builtin, "ge", 1);
       if (node) this.branchOn(node, ifTrue, ifFalse);
@@ -893,6 +933,7 @@ export class Lowerer {
 
     // A sensor compared against a constant folds into the sensor widget itself.
     const leftSensor = this.asSensorCall(left);
+    if (leftSensor === "failed") return;
     const rightConstant = this.constEvaluator().evalInt(right);
     if (leftSensor && rightConstant !== undefined) {
       const node = this.emitSensorAsCondition(leftSensor.call, leftSensor.builtin, raw, rightConstant);
@@ -901,6 +942,7 @@ export class Lowerer {
     }
 
     const rightSensor = this.asSensorCall(right);
+    if (rightSensor === "failed") return;
     const leftConstant = this.constEvaluator().evalInt(left);
     if (rightSensor && leftConstant !== undefined) {
       // Reverse the comparison so the sensor stays on the left.
@@ -959,12 +1001,70 @@ export class Lowerer {
     this.startBlock(this.builder.create());
   }
 
-  private asSensorCall(expr: Expr): { call: Call; builtin: BuiltinSpec } | undefined {
+  /**
+   * A sensor call, resolved to the variant its first argument selects.
+   * "failed" means it was a sensor but the subject was wrong — the error is
+   * already reported, so the caller should stop rather than diagnose again.
+   */
+  private asSensorCall(expr: Expr): { call: Call; builtin: BuiltinSpec } | "failed" | undefined {
     if (expr.kind !== "call") return undefined;
     const name = calleeName(expr);
     if (!name) return undefined;
-    const builtin = getBuiltin(name);
-    return builtin?.condition ? { call: expr, builtin } : undefined;
+    const variants = getSensor(name);
+    if (!variants) {
+      // The pre-rework spelling deserves a pointed message, not "bad-condition".
+      const [head, tail] = name.split(".");
+      if (head === "drone" && tail && getSensor(tail)) {
+        this.diagnostics.error("unknown-function", unknownFunctionMessage(name), expr.span);
+        return "failed";
+      }
+      return undefined;
+    }
+    return this.resolveSensorVariant(expr, name, variants);
+  }
+
+  private resolveSensorVariant(
+    call: Call,
+    name: string,
+    variants: SensorVariants,
+  ): { call: Call; builtin: BuiltinSpec } | "failed" {
+    const first = call.args[0];
+    if (!first) {
+      this.diagnostics.error(
+        "missing-subject",
+        `${name}() needs a subject to measure: ${name}(drone), or ${name}(someArea)`,
+        call.span,
+      );
+      return "failed";
+    }
+    if (isDroneSubject(first)) {
+      if (!variants.drone) {
+        this.diagnostics.error(
+          "wrong-subject",
+          `${name}() can only measure an area, not the drone`,
+          first.span,
+        );
+        return "failed";
+      }
+      if (call.args.length > 1) {
+        this.diagnostics.error(
+          "arity",
+          `${name}(drone) takes no further arguments; filters go in the trailing {…} options`,
+          call.args[1]!.span,
+        );
+        return "failed";
+      }
+      return { call, builtin: variants.drone };
+    }
+    if (!variants.area) {
+      this.diagnostics.error(
+        "wrong-subject",
+        `${name}() can only measure the drone itself — write ${name}(drone)`,
+        first.span,
+      );
+      return "failed";
+    }
+    return { call, builtin: variants.area };
   }
 
   private emitSensorAsCondition(
@@ -1270,6 +1370,19 @@ function withTextParam(node: WidgetNode, text: WidgetNode): (WidgetNode[] | unde
   while (rows.length < 2) rows.push([]);
   rows[1] = [text];
   return rows;
+}
+
+function isDroneSubject(expr: Expr): boolean {
+  return expr.kind === "ident" && expr.name === "drone";
+}
+
+/** Steer anyone typing the pre-rework spelling (`drone.rf()`) to the new one. */
+function unknownFunctionMessage(name: string): string {
+  const [head, tail] = name.split(".");
+  if (head === "drone" && tail && getSensor(tail)) {
+    return `no function named "${name}" — the drone is the sensor's argument: ${tail}(drone)`;
+  }
+  return `no function named "${name}"`;
 }
 
 function calleeName(call: Call): string | undefined {

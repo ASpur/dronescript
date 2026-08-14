@@ -47,7 +47,7 @@ export type Terminator =
    */
   | { readonly kind: "end" }
   /** The suicide widget: nothing follows, and the drone is gone. */
-  | { readonly kind: "halt" };
+  | { readonly kind: "suicide" };
 
 export interface Block {
   readonly id: BlockId;
@@ -100,7 +100,7 @@ export function successors(terminator: Terminator): BlockId[] {
     case "foreach":
       return [terminator.cont];
     case "end":
-    case "halt":
+    case "suicide":
       return [];
   }
 }

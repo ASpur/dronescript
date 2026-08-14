@@ -7,7 +7,7 @@ const ores = filter("minecraft:iron_ore");
 
 while (true) {
   // Nothing to do until something shows up, so wait rather than spin.
-  if (itemsIn(input) == 0) {
+  if (items(input) == 0) {
     wait(40);
     continue;
   }

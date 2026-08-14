@@ -33,7 +33,7 @@ export const KEYWORDS = new Set([
   "break",
   "continue",
   "return",
-  "halt",
+  "drone",
   "true",
   "false",
 ]);

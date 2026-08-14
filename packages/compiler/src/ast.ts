@@ -53,7 +53,7 @@ export interface Identifier extends Node {
   readonly name: string;
 }
 
-/** `p.x`, or a namespaced builtin like `drone.pressure`. */
+/** `p.x` — a coordinate component. */
 export interface Member extends Node {
   readonly kind: "member";
   readonly target: Expr;
@@ -128,8 +128,7 @@ export type Stmt =
   | ForEach
   | Break
   | Continue
-  | Return
-  | Halt;
+  | Return;
 
 export interface Block extends Node {
   readonly kind: "block";
@@ -186,7 +185,7 @@ export interface For extends Node {
   readonly body: Stmt;
 }
 
-/** `foreach (c in area)` and `foreach (it in items(filter))`. */
+/** `foreach (c in area)` and `foreach (it in items(drone))`. */
 export interface ForEach extends Node {
   readonly kind: "foreach";
   readonly variable: string;
@@ -205,11 +204,6 @@ export interface Continue extends Node {
 export interface Return extends Node {
   readonly kind: "return";
   readonly value?: Expr;
-}
-
-/** `halt` — the suicide widget; the drone destroys itself. */
-export interface Halt extends Node {
-  readonly kind: "halt";
 }
 
 // --- Declarations ----------------------------------------------------------

@@ -70,7 +70,7 @@ describe("parser", () => {
   });
 
   it("still reads < as a comparison when it follows an operand", () => {
-    const file = parseOk("if (a < b) { halt; }");
+    const file = parseOk("if (a < b) { wait(1); }");
     const stmt = file.body[0] as If;
     expect((stmt.condition as Binary).op).toBe("<");
   });
@@ -83,7 +83,7 @@ describe("parser", () => {
   });
 
   it("makes && bind tighter than ||", () => {
-    const file = parseOk("if (a || b && c) { halt; }");
+    const file = parseOk("if (a || b && c) { wait(1); }");
     const condition = (file.body[0] as If).condition as Binary;
     expect(condition.op).toBe("||");
     expect((condition.right as Binary).op).toBe("&&");
@@ -104,11 +104,11 @@ describe("parser", () => {
     expect(call.options?.properties.map((p) => p.name)).toEqual(["order", "maxActions"]);
   });
 
-  it("parses member access for namespaced builtins", () => {
-    const file = parseOk("if (drone.pressure() >= 5) { halt; }");
+  it("parses the drone keyword as a sensor subject", () => {
+    const file = parseOk("if (pressure(drone) >= 5) { suicide(); }");
     const condition = (file.body[0] as If).condition as Binary;
     const call = condition.left as Call;
-    expect(call.callee.kind).toBe("member");
+    expect(call.args[0]).toMatchObject({ kind: "ident", name: "drone" });
   });
 
   it("parses functions and distinguishes them from variables", () => {
@@ -121,7 +121,7 @@ describe("parser", () => {
   });
 
   it("parses for loops with all clauses optional", () => {
-    const file = parseOk("for (;;) { halt; }");
+    const file = parseOk("for (;;) { wait(1); }");
     const loop = file.body[0] as { kind: string; init?: Stmt; condition?: unknown; step?: Stmt };
     expect(loop.kind).toBe("for");
     expect(loop.init).toBeUndefined();

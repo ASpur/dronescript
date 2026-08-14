@@ -147,7 +147,7 @@ describe("conditions", () => {
     const result = okV3(`
       const chest = area(<0, 64, 0>);
       const cobble = filter("minecraft:cobblestone");
-      if (itemsIn(chest, {only: cobble}) > 10) { wait(20); }
+      if (items(chest, {only: cobble}) > 10) { wait(20); }
     `);
     const condition = v3Widgets(result).find(
       (w) => w["type"] === "pneumaticcraft:condition_item_inventory",
@@ -157,7 +157,7 @@ describe("conditions", () => {
   });
 
   it("keeps >= as-is", () => {
-    const result = okV3(`if (drone.pressure() >= 5) { wait(1); }`);
+    const result = okV3(`if (pressure(drone) >= 5) { wait(1); }`);
     const condition = v3Widgets(result).find(
       (w) => w["type"] === "pneumaticcraft:drone_condition_pressure",
     )!;
@@ -167,7 +167,7 @@ describe("conditions", () => {
 
   it("spends no jump widgets on a chain of &&", () => {
     const result = ok(`
-      if (drone.pressure() >= 3 && drone.rf() >= 10 && drone.items() >= 1) {
+      if (pressure(drone) >= 3 && rf(drone) >= 10 && items(drone) >= 1) {
         wait(20);
       }
     `);
@@ -179,7 +179,7 @@ describe("conditions", () => {
 
   it("compiles if/else", () => {
     const result = ok(`
-      if (drone.pressure() >= 5) { wait(10); } else { wait(20); }
+      if (pressure(drone) >= 5) { wait(10); } else { wait(20); }
     `);
     expect(types(result)).toContain("drone_condition_pressure");
     expect(result.placed!.filter((p) => p.type === "wait")).toHaveLength(2);
@@ -222,7 +222,7 @@ describe("conditions", () => {
   it("measures a sensor into a variable when used as a value", () => {
     const result = okV3(`
       int n;
-      n = drone.pressure();
+      n = pressure(drone);
     `);
     const condition = v3Widgets(result).find(
       (w) => w["type"] === "pneumaticcraft:drone_condition_pressure",
@@ -234,7 +234,7 @@ describe("conditions", () => {
 describe("loops", () => {
   it("compiles a while loop", () => {
     const result = ok(`
-      while (drone.pressure() >= 1) {
+      while (pressure(drone) >= 1) {
         wait(20);
       }
     `);
@@ -267,8 +267,8 @@ describe("loops", () => {
   it("compiles break and continue", () => {
     const result = ok(`
       while (true) {
-        if (drone.pressure() <= 1) { break; }
-        if (drone.items() >= 64) { continue; }
+        if (pressure(drone) <= 1) { break; }
+        if (items(drone) >= 64) { continue; }
         wait(5);
       }
     `);
@@ -285,6 +285,70 @@ describe("loops", () => {
     `);
     expect(types(result)).toContain("for_each_coordinate");
     expect(result.issues).toEqual([]);
+  });
+
+  it("compiles foreach over the drone's items", () => {
+    const result = ok(`
+      const ores = filter("minecraft:iron_ore");
+      const porch = area(<0, 64, 0>);
+      foreach (it in items(drone, {only: ores})) {
+        dropItems(porch, {only: filter({var: "it"})});
+      }
+    `);
+    expect(types(result)).toContain("for_each_item");
+    expect(result.issues).toEqual([]);
+  });
+
+  it("rejects foreach items without the drone subject", () => {
+    expect(
+      errors(`const f = filter("minecraft:dirt"); foreach (it in items(f)) { wait(1); }`),
+    ).toContain("foreach-iterable");
+  });
+});
+
+describe("sensor subjects", () => {
+  it("selects the widget by the subject argument", () => {
+    const both = ok(`
+      const machines = area(<0, 64, 0>, <2, 64, 2>);
+      if (pressure(drone) >= 5) { wait(1); }
+      if (pressure(machines) >= 5) { wait(1); }
+    `);
+    expect(types(both)).toContain("drone_condition_pressure");
+    expect(types(both)).toContain("condition_pressure");
+  });
+
+  it("rejects a drone subject on an area-only sensor", () => {
+    expect(errors(`if (light(drone) >= 5) { wait(1); }`)).toContain("wrong-subject");
+  });
+
+  it("rejects an area subject on a drone-only sensor", () => {
+    expect(errors(`if (upgrades(area(<0,0,0>)) >= 1) { wait(1); }`)).toContain("wrong-subject");
+  });
+
+  it("rejects a sensor with no subject at all", () => {
+    expect(errors(`if (pressure() >= 5) { wait(1); }`)).toContain("missing-subject");
+  });
+
+  it("points the old drone.sensor() spelling at the new one", () => {
+    expect(errors(`if (drone.pressure() >= 5) { wait(1); }`)).toContain("unknown-function");
+  });
+
+  it("rejects extra positional arguments after the drone subject", () => {
+    expect(errors(`if (items(drone, area(<0,0,0>)) >= 1) { wait(1); }`)).toContain("arity");
+  });
+});
+
+describe("suicide", () => {
+  it("compiles to the suicide widget and ends the chain", () => {
+    const result = ok(`
+      wait(10);
+      suicide();
+    `);
+    expect(types(result)).toContain("suicide");
+  });
+
+  it("takes no arguments", () => {
+    expect(errors(`suicide(1);`)).toContain("arity");
   });
 });
 
@@ -374,7 +438,7 @@ describe("diagnostics", () => {
   });
 
   it("rejects a sensor used as a statement", () => {
-    expect(errors(`drone.pressure();`)).toContain("sensor-as-statement");
+    expect(errors(`pressure(drone);`)).toContain("sensor-as-statement");
   });
 
   it("explains that a redstone strength must be constant", () => {

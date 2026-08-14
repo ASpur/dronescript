@@ -4,7 +4,14 @@
  * Positional arguments fill parameter rows (areas first, then filters/text);
  * a trailing options object fills the widget's scalar fields. Both are declared
  * here rather than hard-coded in the lowering, so this table also drives
- * signature checking and editor completions.
+ * signature checking, the reference sheet and editor completions — which is why
+ * every option carries a `doc` string: whatever the compiler accepts, the
+ * editor can explain.
+ *
+ * Sensors exist per *subject* — what the first argument measures. `items(area)`
+ * counts inventories in the world; `items(drone)` counts the drone's own cargo.
+ * The two are different widgets with different options, so each is its own
+ * entry, sharing a name and discriminated by `subject`.
  */
 
 import type { ParamType } from "./types.js";
@@ -21,6 +28,8 @@ export interface ParamBinding {
   readonly from: ParamSource;
   /** Reject the call if this row is left empty. */
   readonly required?: boolean;
+  /** What this input does, shown in the reference and signature help. */
+  readonly doc?: string;
 }
 
 export type FieldKindName =
@@ -45,6 +54,8 @@ export interface FieldBinding {
    * the value: `count` needs `use_count`, `maxActions` needs `use_max_actions`.
    */
   readonly enables?: readonly string[];
+  /** What this option does, shown in the reference and signature help. */
+  readonly doc: string;
 }
 
 /** Paths a condition widget uses; they differ between world and drone conditions. */
@@ -57,6 +68,11 @@ export interface ConditionPaths {
 
 export interface BuiltinSpec {
   readonly name: string;
+  /**
+   * Sensors only: what the first argument must be. A name can have one entry
+   * per subject; the lowering picks by looking at the call's first argument.
+   */
+  readonly subject?: "drone" | "area";
   readonly widget: string;
   readonly params: readonly ParamBinding[];
   readonly fields: readonly FieldBinding[];
@@ -81,42 +97,90 @@ const DRONE_CONDITION: ConditionPaths = {
   andFunction: ["drone_cond", "and_func"],
 };
 
-const SIDES_FIELD: FieldBinding = { option: "sides", path: ["inv", "sides"], kind: "sides" };
+const SIDES_FIELD: FieldBinding = {
+  option: "sides",
+  path: ["inv", "sides"],
+  kind: "sides",
+  doc: 'Faces of the target block the drone may work through, e.g. ["up", "north"].',
+};
 const COUNT_FIELD: FieldBinding = {
   option: "count",
   path: ["inv", "count"],
   kind: "int",
   enables: ["inv", "use_count"],
+  doc: "Move at most this many — items here, mB for fluids, FE for energy — then move on.",
 };
 
 /** Area rows, plus their blacklist counterpart. */
 function areaRow(row: number, argIndex: number, required = true): ParamBinding[] {
   return [
     { row, side: "whitelist", type: "area", from: { kind: "arg", index: argIndex }, required },
-    { row, side: "blacklist", type: "area", from: { kind: "option", name: "exceptArea" } },
+    {
+      row,
+      side: "blacklist",
+      type: "area",
+      from: { kind: "option", name: "exceptArea" },
+      doc: "Skip blocks in this area, even where the main area covers them.",
+    },
   ];
 }
 
 /** Item filter rows come from `only` (whitelist) and `except` (blacklist). */
 function itemFilterRow(row: number): ParamBinding[] {
   return [
-    { row, side: "whitelist", type: "item_filter", from: { kind: "option", name: "only" } },
-    { row, side: "blacklist", type: "item_filter", from: { kind: "option", name: "except" } },
+    {
+      row,
+      side: "whitelist",
+      type: "item_filter",
+      from: { kind: "option", name: "only" },
+      doc: "Match only items passing these filters.",
+    },
+    {
+      row,
+      side: "blacklist",
+      type: "item_filter",
+      from: { kind: "option", name: "except" },
+      doc: "Ignore anything matching these filters.",
+    },
   ];
 }
 
 function liquidFilterRow(row: number): ParamBinding[] {
   return [
-    { row, side: "whitelist", type: "liquid_filter", from: { kind: "option", name: "only" } },
-    { row, side: "blacklist", type: "liquid_filter", from: { kind: "option", name: "except" } },
+    {
+      row,
+      side: "whitelist",
+      type: "liquid_filter",
+      from: { kind: "option", name: "only" },
+      doc: "Match only fluids passing these filters.",
+    },
+    {
+      row,
+      side: "blacklist",
+      type: "liquid_filter",
+      from: { kind: "option", name: "except" },
+      doc: "Ignore any fluid matching these filters.",
+    },
   ];
 }
 
 /** The entity-name text row on entity-targeting widgets. */
 function entityFilterRow(row: number): ParamBinding[] {
   return [
-    { row, side: "whitelist", type: "text", from: { kind: "option", name: "entities" } },
-    { row, side: "blacklist", type: "text", from: { kind: "option", name: "exceptEntities" } },
+    {
+      row,
+      side: "whitelist",
+      type: "text",
+      from: { kind: "option", name: "entities" },
+      doc: 'An entity type ("zombie" — * and ? are wildcards), or a quoted name ("\\"Steve\\"") to match one entity or player exactly.',
+    },
+    {
+      row,
+      side: "blacklist",
+      type: "text",
+      from: { kind: "option", name: "exceptEntities" },
+      doc: "Leave matching entities alone, using the same matching rules.",
+    },
   ];
 }
 
@@ -128,12 +192,14 @@ const DIG_PLACE_FIELDS: readonly FieldBinding[] = [
     values: ["closest", "lowToHigh", "highToLow"],
     // The mod's codec requires this field, so it is always written.
     fallback: "closest",
+    doc: "Which matching block to target first: closest, lowToHigh (bottom of the area upward), or highToLow (top down).",
   },
   {
     option: "maxActions",
     path: ["dig_place", "max_actions"],
     kind: "int",
     enables: ["dig_place", "use_max_actions"],
+    doc: "Interact with at most this many blocks, then move on.",
   },
 ];
 
@@ -143,7 +209,14 @@ export const BUILTINS: readonly BuiltinSpec[] = [
     name: "goto",
     widget: "goto",
     params: areaRow(0, 0),
-    fields: [{ option: "doneWhenDeparting", path: ["done_when_depart"], kind: "bool" }],
+    fields: [
+      {
+        option: "doneWhenDeparting",
+        path: ["done_when_depart"],
+        kind: "bool",
+        doc: "Move on to the next action as soon as the drone sets off, instead of when it arrives.",
+      },
+    ],
     summary: "Fly to a location or area.",
   },
   {
@@ -157,8 +230,22 @@ export const BUILTINS: readonly BuiltinSpec[] = [
     name: "standby",
     widget: "standby",
     params: [],
-    fields: [{ option: "allowPickup", path: ["allow_pickup"], kind: "bool" }],
+    fields: [
+      {
+        option: "allowPickup",
+        path: ["allow_pickup"],
+        kind: "bool",
+        doc: "While idle, other entities — boats, minecarts — may pick the drone up.",
+      },
+    ],
     summary: "Land and go idle.",
+  },
+  {
+    name: "suicide",
+    widget: "suicide",
+    params: [],
+    fields: [],
+    summary: "The drone destroys itself, dropping whatever it carries. Ends the program.",
   },
 
   // --- Blocks --------------------------------------------------------------
@@ -168,8 +255,18 @@ export const BUILTINS: readonly BuiltinSpec[] = [
     params: [...areaRow(0, 0), ...itemFilterRow(1)],
     fields: [
       ...DIG_PLACE_FIELDS,
-      { option: "requireTool", path: ["require_tool"], kind: "bool" },
-      { option: "digSide", path: ["dig_side"], kind: "direction" },
+      {
+        option: "requireTool",
+        path: ["require_tool"],
+        kind: "bool",
+        doc: "Only dig while a suitable tool is equipped. An equipped tool also digs faster and lends its enchantments, like Silk Touch.",
+      },
+      {
+        option: "digSide",
+        path: ["dig_side"],
+        kind: "direction",
+        doc: "Approach and break each block from this side. (1.21 only.)",
+      },
     ],
     summary: "Break blocks in an area.",
   },
@@ -177,14 +274,30 @@ export const BUILTINS: readonly BuiltinSpec[] = [
     name: "place",
     widget: "place",
     params: [...areaRow(0, 0), ...itemFilterRow(1)],
-    fields: [...DIG_PLACE_FIELDS, { option: "randomize", path: ["randomize"], kind: "bool" }],
+    fields: [
+      ...DIG_PLACE_FIELDS,
+      {
+        option: "randomize",
+        path: ["randomize"],
+        kind: "bool",
+        doc: "Place a random matching item each time instead of working through the filter in order. (1.21 only.)",
+      },
+    ],
     summary: "Place blocks in an area.",
   },
   {
     name: "harvest",
     widget: "harvest",
     params: [...areaRow(0, 0), ...itemFilterRow(1)],
-    fields: [...DIG_PLACE_FIELDS, { option: "requireHoe", path: ["require_hoe"], kind: "bool" }],
+    fields: [
+      ...DIG_PLACE_FIELDS,
+      {
+        option: "requireHoe",
+        path: ["require_hoe"],
+        kind: "bool",
+        doc: "Only harvest while a hoe is equipped. A hoe-equipped drone also replants what it harvests.",
+      },
+    ],
     summary: "Harvest mature crops in an area.",
   },
   {
@@ -193,13 +306,24 @@ export const BUILTINS: readonly BuiltinSpec[] = [
     params: [...areaRow(0, 0), ...itemFilterRow(1)],
     fields: [
       ...DIG_PLACE_FIELDS,
-      { option: "side", path: ["side"], kind: "direction" },
-      { option: "sneaking", path: ["sneaking"], kind: "bool" },
+      {
+        option: "side",
+        path: ["side"],
+        kind: "direction",
+        doc: "Which face of the block to click.",
+      },
+      {
+        option: "sneaking",
+        path: ["sneaking"],
+        kind: "bool",
+        doc: "Click as if sneaking.",
+      },
       {
         option: "clickType",
         path: ["click_type"],
         kind: "enum",
         values: ["click_item", "click_block"],
+        doc: "click_item uses the held item's right-click logic (e.g. flint and steel); click_block uses the block's own (e.g. flipping a lever).",
       },
     ],
     summary: "Right-click blocks in an area.",
@@ -209,9 +333,22 @@ export const BUILTINS: readonly BuiltinSpec[] = [
     widget: "edit_sign",
     params: [
       ...areaRow(0, 0),
-      { row: 1, side: "whitelist", type: "text", from: { kind: "arg", index: 1 } },
+      {
+        row: 1,
+        side: "whitelist",
+        type: "text",
+        from: { kind: "arg", index: 1 },
+        doc: "The text to write.",
+      },
     ],
-    fields: [{ option: "backSide", path: ["back_side"], kind: "bool" }],
+    fields: [
+      {
+        option: "backSide",
+        path: ["back_side"],
+        kind: "bool",
+        doc: "Write the back of the sign instead of the front.",
+      },
+    ],
     summary: "Write lines onto a sign.",
   },
 
@@ -234,7 +371,14 @@ export const BUILTINS: readonly BuiltinSpec[] = [
     name: "pickupItems",
     widget: "pickup_item",
     params: [...areaRow(0, 0), ...itemFilterRow(1)],
-    fields: [{ option: "canSteal", path: ["can_steal"], kind: "bool" }],
+    fields: [
+      {
+        option: "canSteal",
+        path: ["can_steal"],
+        kind: "bool",
+        doc: "Also grab items normally protected from pickup, like items on conveyor belts.",
+      },
+    ],
     summary: "Pick up dropped items.",
   },
   {
@@ -244,8 +388,18 @@ export const BUILTINS: readonly BuiltinSpec[] = [
     fields: [
       SIDES_FIELD,
       COUNT_FIELD,
-      { option: "dropStraight", path: ["drop_straight"], kind: "bool" },
-      { option: "pickupDelay", path: ["pick_delay"], kind: "bool" },
+      {
+        option: "dropStraight",
+        path: ["drop_straight"],
+        kind: "bool",
+        doc: "Drop straight down instead of tossing with a random spread.",
+      },
+      {
+        option: "pickupDelay",
+        path: ["pick_delay"],
+        kind: "bool",
+        doc: "Give dropped items the normal 40-tick pickup delay.",
+      },
     ],
     summary: "Drop items on the ground.",
   },
@@ -260,20 +414,42 @@ export const BUILTINS: readonly BuiltinSpec[] = [
     name: "craft",
     widget: "crafting",
     params: [
-      { row: 0, side: "whitelist", type: "item_filter", from: { kind: "arg", index: 0 } },
-      { row: 1, side: "whitelist", type: "item_filter", from: { kind: "arg", index: 1 } },
-      { row: 2, side: "whitelist", type: "item_filter", from: { kind: "arg", index: 2 } },
+      { row: 0, side: "whitelist", type: "item_filter", from: { kind: "arg", index: 0 }, doc: "Top row of the crafting grid." },
+      { row: 1, side: "whitelist", type: "item_filter", from: { kind: "arg", index: 1 }, doc: "Middle row of the crafting grid." },
+      { row: 2, side: "whitelist", type: "item_filter", from: { kind: "arg", index: 2 }, doc: "Bottom row of the crafting grid." },
     ],
-    fields: [{ option: "count", path: ["count"], kind: "int", enables: ["use_count"] }],
+    fields: [
+      {
+        option: "count",
+        path: ["count"],
+        kind: "int",
+        enables: ["use_count"],
+        doc: "Craft at most this many results, then move on.",
+      },
+    ],
     summary: "Craft from the drone's inventory, one row of the grid per argument.",
   },
   {
     name: "itemAssign",
     widget: "item_assign",
     params: [
-      { row: 0, side: "whitelist", type: "item_filter", from: { kind: "arg", index: 1 }, required: true },
+      {
+        row: 0,
+        side: "whitelist",
+        type: "item_filter",
+        from: { kind: "arg", index: 1 },
+        required: true,
+        doc: "The filter to store. Exactly one.",
+      },
     ],
-    fields: [{ option: "var", path: ["var"], kind: "string" }],
+    fields: [
+      {
+        option: "var",
+        path: ["var"],
+        kind: "string",
+        doc: "Name of the item variable to store the filter in.",
+      },
+    ],
     summary: "Store an item filter into an item variable.",
   },
 
@@ -290,8 +466,14 @@ export const BUILTINS: readonly BuiltinSpec[] = [
         path: ["order"],
         kind: "enum",
         values: ["closest", "lowToHigh", "highToLow"],
+        doc: "Which tank to drain first: closest, lowToHigh (bottom of the area upward), or highToLow (top down).",
       },
-      { option: "voidExcess", path: ["void_excess"], kind: "bool" },
+      {
+        option: "voidExcess",
+        path: ["void_excess"],
+        kind: "bool",
+        doc: "If drained fluid does not fit in the drone's tank, destroy it instead of leaving it behind.",
+      },
     ],
     summary: "Drain fluid from tanks in an area.",
   },
@@ -302,7 +484,12 @@ export const BUILTINS: readonly BuiltinSpec[] = [
     fields: [
       SIDES_FIELD,
       COUNT_FIELD,
-      { option: "placeFluidBlocks", path: ["place_fluid_blocks"], kind: "bool" },
+      {
+        option: "placeFluidBlocks",
+        path: ["place_fluid_blocks"],
+        kind: "bool",
+        doc: "Place the fluid into the world as source blocks instead of filling tanks.",
+      },
     ],
     summary: "Fill tanks in an area from the drone's tank.",
   },
@@ -339,8 +526,14 @@ export const BUILTINS: readonly BuiltinSpec[] = [
         path: ["max_actions"],
         kind: "int",
         enables: ["use_max_actions"],
+        doc: "Attack at most this many entities, then move on.",
       },
-      { option: "checkSight", path: ["check_sight"], kind: "bool" },
+      {
+        option: "checkSight",
+        path: ["check_sight"],
+        kind: "bool",
+        doc: "Only attack entities the drone can see; ignore ones behind walls.",
+      },
     ],
     summary: "Attack entities in an area.",
   },
@@ -371,7 +564,14 @@ export const BUILTINS: readonly BuiltinSpec[] = [
     name: "wait",
     widget: "wait",
     params: [
-      { row: 0, side: "whitelist", type: "text", from: { kind: "arg", index: 0 }, required: true },
+      {
+        row: 0,
+        side: "whitelist",
+        type: "text",
+        from: { kind: "arg", index: 0 },
+        required: true,
+        doc: "Ticks to pause — 20 per second. Must be a constant.",
+      },
     ],
     fields: [],
     summary: "Pause for a number of ticks.",
@@ -380,16 +580,36 @@ export const BUILTINS: readonly BuiltinSpec[] = [
     name: "emitRedstone",
     widget: "emit_redstone",
     params: [
-      { row: 0, side: "whitelist", type: "text", from: { kind: "arg", index: 0 }, required: true },
+      {
+        row: 0,
+        side: "whitelist",
+        type: "text",
+        from: { kind: "arg", index: 0 },
+        required: true,
+        doc: "Signal strength, 0–15. Must be a constant.",
+      },
     ],
-    fields: [{ option: "sides", path: ["sides"], kind: "sides" }],
+    fields: [
+      {
+        ...SIDES_FIELD,
+        path: ["sides"],
+        doc: "Which of the drone's sides emit the signal.",
+      },
+    ],
     summary: "Emit a redstone signal. The strength must be a constant.",
   },
   {
     name: "rename",
     widget: "rename",
     params: [
-      { row: 0, side: "whitelist", type: "text", from: { kind: "arg", index: 0 }, required: true },
+      {
+        row: 0,
+        side: "whitelist",
+        type: "text",
+        from: { kind: "arg", index: 0 },
+        required: true,
+        doc: "The drone's new name.",
+      },
     ],
     fields: [],
     summary: "Rename the drone.",
@@ -405,7 +625,14 @@ export const BUILTINS: readonly BuiltinSpec[] = [
     name: "externalProgram",
     widget: "external_program",
     params: areaRow(0, 0),
-    fields: [{ option: "shareVariables", path: ["share_variables"], kind: "bool" }],
+    fields: [
+      {
+        option: "shareVariables",
+        path: ["share_variables"],
+        kind: "bool",
+        doc: "Share this program's variables with the called program, instead of giving it a clean slate.",
+      },
+    ],
     summary: "Run a program stored in a Programmable Controller in an area.",
   },
   {
@@ -416,9 +643,10 @@ export const BUILTINS: readonly BuiltinSpec[] = [
     summary: "Hand control to an attached computer.",
   },
 
-  // --- Sensors (condition widgets) ----------------------------------------
+  // --- Sensors, world subject: measure an area ------------------------------
   {
-    name: "itemsIn",
+    name: "items",
+    subject: "area",
     widget: "condition_item_inventory",
     params: [...areaRow(0, 0), ...itemFilterRow(1)],
     fields: [SIDES_FIELD],
@@ -427,28 +655,41 @@ export const BUILTINS: readonly BuiltinSpec[] = [
     summary: "Count matching items in inventories in an area.",
   },
   {
-    name: "liquidIn",
+    name: "liquid",
+    subject: "area",
     widget: "condition_liquid_inventory",
     params: [...areaRow(0, 0), ...liquidFilterRow(1)],
     fields: [SIDES_FIELD],
     condition: WORLD_CONDITION,
     branchRow: 2,
-    summary: "Measure fluid in tanks in an area.",
+    summary: "Measure fluid in tanks in an area, in mB.",
   },
   {
-    name: "blocksIn",
+    name: "blocks",
+    subject: "area",
     widget: "condition_block",
     params: [...areaRow(0, 0), ...itemFilterRow(1)],
     fields: [
-      { option: "checkAir", path: ["check_air"], kind: "bool" },
-      { option: "checkLiquid", path: ["check_liquid"], kind: "bool" },
+      {
+        option: "checkAir",
+        path: ["check_air"],
+        kind: "bool",
+        doc: "Count air blocks as matching the filter.",
+      },
+      {
+        option: "checkLiquid",
+        path: ["check_liquid"],
+        kind: "bool",
+        doc: "Count liquid blocks as matching the filter.",
+      },
     ],
     condition: WORLD_CONDITION,
     branchRow: 2,
     summary: "Count matching blocks in an area.",
   },
   {
-    name: "redstoneAt",
+    name: "redstone",
+    subject: "area",
     widget: "condition_redstone",
     params: [...areaRow(0, 0)],
     fields: [SIDES_FIELD],
@@ -457,7 +698,8 @@ export const BUILTINS: readonly BuiltinSpec[] = [
     summary: "Read the redstone level in an area.",
   },
   {
-    name: "lightAt",
+    name: "light",
+    subject: "area",
     widget: "condition_light",
     params: [...areaRow(0, 0)],
     fields: [],
@@ -466,25 +708,28 @@ export const BUILTINS: readonly BuiltinSpec[] = [
     summary: "Read the light level in an area.",
   },
   {
-    name: "pressureAt",
+    name: "pressure",
+    subject: "area",
     widget: "condition_pressure",
     params: [...areaRow(0, 0)],
     fields: [],
     condition: WORLD_CONDITION,
     branchRow: 1,
-    summary: "Read the pressure of machines in an area.",
+    summary: "Read the pressure of machines in an area, in bar.",
   },
   {
-    name: "rfAt",
+    name: "rf",
+    subject: "area",
     widget: "condition_rf",
     params: [...areaRow(0, 0)],
     fields: [],
     condition: WORLD_CONDITION,
     branchRow: 1,
-    summary: "Read stored energy in an area, as a percentage.",
+    summary: "Read stored energy in an area — as a percentage, unlike rf(drone).",
   },
   {
-    name: "entitiesIn",
+    name: "entities",
+    subject: "area",
     widget: "condition_entity",
     params: [...areaRow(0, 0), ...entityFilterRow(1)],
     fields: [],
@@ -493,27 +738,31 @@ export const BUILTINS: readonly BuiltinSpec[] = [
     summary: "Count entities in an area.",
   },
 
-  // --- Sensors about the drone itself -------------------------------------
+  // --- Sensors, drone subject: measure the drone itself ---------------------
   {
-    name: "drone.items",
+    name: "items",
+    subject: "drone",
     widget: "drone_condition_item",
     params: itemFilterRow(0),
     fields: [],
     condition: DRONE_CONDITION,
     branchRow: 1,
-    summary: "Count matching items the drone is carrying.",
+    summary:
+      "Count matching items the drone is carrying. Also the foreach iterable: foreach (it in items(drone)).",
   },
   {
-    name: "drone.liquid",
+    name: "liquid",
+    subject: "drone",
     widget: "drone_condition_liquid",
     params: liquidFilterRow(0),
     fields: [],
     condition: DRONE_CONDITION,
     branchRow: 1,
-    summary: "Measure fluid in the drone's tank.",
+    summary: "Measure fluid in the drone's tank, in mB.",
   },
   {
-    name: "drone.entities",
+    name: "entities",
+    subject: "drone",
     widget: "drone_condition_entity",
     params: entityFilterRow(0),
     fields: [],
@@ -522,25 +771,28 @@ export const BUILTINS: readonly BuiltinSpec[] = [
     summary: "Count entities the drone is carrying.",
   },
   {
-    name: "drone.pressure",
+    name: "pressure",
+    subject: "drone",
     widget: "drone_condition_pressure",
     params: [],
     fields: [],
     condition: DRONE_CONDITION,
     branchRow: 0,
-    summary: "Read the drone's own pressure.",
+    summary: "Read the drone's own pressure, in bar.",
   },
   {
-    name: "drone.rf",
+    name: "rf",
+    subject: "drone",
     widget: "drone_condition_rf",
     params: [],
     fields: [],
     condition: DRONE_CONDITION,
     branchRow: 0,
-    summary: "Read the drone's stored energy.",
+    summary: "Read the drone's stored energy — absolute FE, unlike rf(area).",
   },
   {
-    name: "drone.upgrades",
+    name: "upgrades",
+    subject: "drone",
     widget: "drone_condition_upgrades",
     params: itemFilterRow(0),
     fields: [],
@@ -550,17 +802,37 @@ export const BUILTINS: readonly BuiltinSpec[] = [
   },
 ];
 
-const BY_NAME = new Map(BUILTINS.map((b) => [b.name, b]));
+/** Sensor variants that share a name, one per subject. */
+export interface SensorVariants {
+  readonly drone?: BuiltinSpec;
+  readonly area?: BuiltinSpec;
+}
 
+const ACTIONS = new Map<string, BuiltinSpec>();
+const SENSORS = new Map<string, SensorVariants>();
+for (const b of BUILTINS) {
+  if (b.subject) {
+    SENSORS.set(b.name, { ...SENSORS.get(b.name), [b.subject]: b });
+  } else {
+    ACTIONS.set(b.name, b);
+  }
+}
+
+/** Non-sensor builtins, which have exactly one form per name. */
 export function getBuiltin(name: string): BuiltinSpec | undefined {
-  return BY_NAME.get(name);
+  return ACTIONS.get(name);
+}
+
+/** A sensor's variants: which subjects it can measure. */
+export function getSensor(name: string): SensorVariants | undefined {
+  return SENSORS.get(name);
 }
 
 export function isBuiltin(name: string): boolean {
-  return BY_NAME.has(name);
+  return ACTIONS.has(name) || SENSORS.has(name);
 }
 
 /** Builtins usable in a condition, i.e. those backed by a condition widget. */
 export function isSensor(name: string): boolean {
-  return BY_NAME.get(name)?.condition !== undefined;
+  return SENSORS.has(name);
 }

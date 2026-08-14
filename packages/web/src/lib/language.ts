@@ -12,7 +12,7 @@ import { BUILTINS, KEYWORDS } from "@dronescript/compiler";
 import {
   docMarkdown,
   documentationFor,
-  findFunctionDoc,
+  findFunctionDocs,
   PSEUDO_FUNCTIONS,
   signatureLayout,
   signatureOf,
@@ -51,7 +51,7 @@ export function registerLanguage(): void {
 
   monaco.languages.setMonarchTokensProvider(LANGUAGE_ID, {
     keywords: [...KEYWORDS],
-    builtins: BUILTINS.map((b) => b.name.split(".").pop()!),
+    builtins: [...new Set(BUILTINS.map((b) => b.name))],
     tokenizer: {
       root: [
         [/\/\/.*$/, "comment"],
@@ -112,6 +112,8 @@ export function registerLanguage(): void {
       const suggestions: monaco.languages.CompletionItem[] = [];
 
       for (const builtin of BUILTINS) {
+        // Sensor names appear once per subject; the snippet pre-fills `drone`
+        // for the drone variant so the two are distinguishable at a glance.
         suggestions.push({
           label: builtin.name,
           kind: builtin.condition
@@ -119,7 +121,7 @@ export function registerLanguage(): void {
             : monaco.languages.CompletionItemKind.Function,
           detail: signatureOf(builtin),
           documentation: { value: documentationFor(builtin) },
-          insertText: `${builtin.name.split(".").pop()!}($0)`,
+          insertText: builtin.subject === "drone" ? `${builtin.name}(drone$0)` : `${builtin.name}($0)`,
           insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
           range,
         });
@@ -165,7 +167,7 @@ export function registerLanguage(): void {
   monaco.languages.registerLinkProvider(LANGUAGE_ID, {
     provideLinks(model) {
       const links: monaco.languages.ILink[] = [];
-      const pattern = /\b[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)?(?=\s*\()/g;
+      const pattern = /\b[A-Za-z_]\w*(?=\s*\()/g;
       model.getLinesContent().forEach((line, i) => {
         for (const match of line.matchAll(pattern)) {
           const name = match[0];
@@ -212,21 +214,27 @@ export function registerLanguage(): void {
     provideSignatureHelp(model, position) {
       const call = callAt(model, position);
       if (!call) return null;
-      const layout = signatureLayout(call.doc);
+      const layouts = call.docs.map((doc) => ({ doc, layout: signatureLayout(doc) }));
+      // A sensor has one signature per subject; front the one the first
+      // argument selects, so typing `pressure(drone` shows the drone variant.
+      const preferred = layouts.findIndex(
+        ({ doc }) => (doc.subject === "drone") === call.firstArgIsDrone,
+      );
+      const active = Math.max(0, preferred);
+      const clamp = (count: number) => Math.max(0, Math.min(call.activeParameter, count - 1));
       return {
         value: {
-          signatures: [
-            {
-              label: layout.label,
-              documentation: { value: call.doc.summary },
-              parameters: layout.parameters.map((p) => ({
-                label: p.label,
-                documentation: { value: p.documentation },
-              })),
-            },
-          ],
-          activeSignature: 0,
-          activeParameter: Math.min(call.activeParameter, layout.parameters.length - 1),
+          signatures: layouts.map(({ doc, layout }) => ({
+            label: layout.label,
+            documentation: { value: doc.summary },
+            parameters: layout.parameters.map((p) => ({
+              label: p.label,
+              documentation: { value: p.documentation },
+            })),
+            activeParameter: clamp(layout.parameters.length),
+          })),
+          activeSignature: active,
+          activeParameter: clamp(layouts[active]!.layout.parameters.length),
         },
         dispose() {},
       };
@@ -257,8 +265,15 @@ export function hoverAt(
     word.endColumn,
   );
 
-  const doc = resolveDoc(model, position, word.word);
-  if (doc) return { signature: doc.signature, markdown: docMarkdown(doc), range };
+  // A sensor name documents one variant per subject; show them together.
+  const docs = findFunctionDocs(word.word);
+  if (docs.length > 0) {
+    return {
+      signature: docs.map((d) => d.signature).join("\n"),
+      markdown: docs.map(docMarkdown).join("\n\n---\n\n"),
+      range,
+    };
+  }
 
   const special = SPECIALS_BY_NAME.get(word.word);
   if (special) {
@@ -274,30 +289,6 @@ export function hoverAt(
   return undefined;
 }
 
-/** A qualified name like `drone.rf` is two words to Monaco; rejoin it. */
-function resolveDoc(
-  model: monaco.editor.ITextModel,
-  position: monaco.IPosition,
-  word: string,
-): FunctionDoc | undefined {
-  const before = model.getValueInRange({
-    startLineNumber: position.lineNumber,
-    startColumn: 1,
-    endLineNumber: position.lineNumber,
-    endColumn: position.column,
-  });
-  const qualifier = /([A-Za-z_]\w*)\.\w*$/.exec(before)?.[1];
-  return (
-    (qualifier ? findFunctionDoc(`${qualifier}.${word}`) : undefined) ??
-    findFunctionDoc(word) ??
-    // `pressure` on its own still means `drone.pressure` if nothing else claims it.
-    (() => {
-      const tail = BUILTINS.filter((b) => b.name.split(".").pop() === word);
-      return tail.length === 1 ? findFunctionDoc(tail[0]!.name) : undefined;
-    })()
-  );
-}
-
 /**
  * The call the caret sits inside, and which input it is on. Walks the text once,
  * skipping comments and strings, keeping a frame per open paren: commas only
@@ -307,7 +298,7 @@ function resolveDoc(
 function callAt(
   model: monaco.editor.ITextModel,
   position: monaco.IPosition,
-): { doc: FunctionDoc; activeParameter: number } | undefined {
+): { docs: readonly FunctionDoc[]; activeParameter: number; firstArgIsDrone: boolean } | undefined {
   const text = model.getValue().slice(0, model.getOffsetAt(position));
   const frames: { start: number; commas: number; depth: number }[] = [];
 
@@ -361,9 +352,15 @@ function callAt(
   // Innermost first: a grouping paren has no name, so fall out to the real call.
   for (let f = frames.length - 1; f >= 0; f--) {
     const frame = frames[f]!;
-    const name = /([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)?)\s*$/.exec(text.slice(0, frame.start))?.[1];
-    const doc = name ? findFunctionDoc(name) : undefined;
-    if (doc) return { doc, activeParameter: frame.commas };
+    const name = /([A-Za-z_]\w*)\s*$/.exec(text.slice(0, frame.start))?.[1];
+    const docs = name ? findFunctionDocs(name) : [];
+    if (docs.length > 0) {
+      return {
+        docs,
+        activeParameter: frame.commas,
+        firstArgIsDrone: /^\s*drone\b/.test(text.slice(frame.start + 1)),
+      };
+    }
   }
   return undefined;
 }

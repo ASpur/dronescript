@@ -22,6 +22,8 @@ export interface OptionDoc {
   readonly name: string;
   /** Human-readable type or the enum values, e.g. `item filter`, `filled | hollow`. */
   readonly type: string;
+  /** What the option does, straight from the builtin table. */
+  readonly doc: string;
 }
 
 export interface PositionalDoc {
@@ -29,12 +31,18 @@ export interface PositionalDoc {
   readonly label: string;
   readonly type: string;
   readonly required: boolean;
+  /** What this input does, when the type alone does not say. */
+  readonly doc?: string;
   /** A slot the widget table never reads, so whatever is passed is discarded. */
   readonly ignored?: boolean;
 }
 
 export interface FunctionDoc {
   readonly name: string;
+  /** Unique across the sheet: sensors repeat a name once per subject. */
+  readonly key: string;
+  /** Sensors: what the first argument measures. */
+  readonly subject?: "drone" | "area";
   readonly signature: string;
   readonly summary: string;
   /** Condition widgets: usable in `if`/`while`/`for`, or assigned to measure. */
@@ -57,14 +65,21 @@ export function docFor(builtin: BuiltinSpec): FunctionDoc {
       label: p.type,
       type: p.type.replace("_", " "),
       required: p.required === true,
+      doc: p.doc,
     };
   }
   const positional = Array.from(byIndex, (slot) =>
     slot ?? { label: "_", type: "ignored", required: false, ignored: true },
   );
+  // A drone-subject sensor's subject is positional, but binds no parameter row.
+  if (builtin.subject === "drone") {
+    positional.unshift({ label: "drone", type: "the drone itself", required: true });
+  }
 
   const parameters = builtin.params.flatMap((p) =>
-    p.from.kind === "option" ? [{ name: p.from.name, type: p.type.replace("_", " ") }] : [],
+    p.from.kind === "option"
+      ? [{ name: p.from.name, type: p.type.replace("_", " "), doc: p.doc ?? "" }]
+      : [],
   );
   const options = builtin.fields.map((field) => ({
     name: field.option,
@@ -73,10 +88,13 @@ export function docFor(builtin: BuiltinSpec): FunctionDoc {
       (field.kind === "direction" || field.kind === "sides"
         ? DIRECTIONS.join(" | ")
         : field.kind),
+    doc: field.doc,
   }));
   return {
     name: builtin.name,
-    signature: signatureFrom(builtin.name, positional),
+    key: builtin.subject ? `${builtin.name}(${builtin.subject})` : builtin.name,
+    subject: builtin.subject,
+    signature: signatureFrom(builtin.name, positional, parameters.length + options.length > 0),
     summary: builtin.summary,
     sensor: builtin.condition !== undefined,
     positional,
@@ -85,9 +103,16 @@ export function docFor(builtin: BuiltinSpec): FunctionDoc {
   };
 }
 
-function signatureFrom(name: string, positional: readonly PositionalDoc[]): string {
+function signatureFrom(
+  name: string,
+  positional: readonly PositionalDoc[],
+  hasNamedOptions: boolean,
+): string {
+  // `{options}` appears only when there is at least one named option to put in
+  // it — a signature must never advertise settings the compiler would reject.
   const labels = positional.map((p) => p.label);
-  return `${name}(${labels.join(", ")}${labels.length > 0 ? ", " : ""}{options})`;
+  if (hasNamedOptions) labels.push("{options}");
+  return `${name}(${labels.join(", ")})`;
 }
 
 export function signatureOf(builtin: BuiltinSpec): string {
@@ -104,7 +129,9 @@ export function docMarkdown(doc: FunctionDoc): string {
       lines.push(
         p.ignored
           ? `- \`_\` — nothing reads this slot, so whatever is passed is discarded`
-          : `- \`${p.label}\` — ${p.type}${p.required ? ", required" : ", optional"}`,
+          : `- \`${p.label}\` — ${p.type}${p.required ? ", required" : ", optional"}${
+              p.doc ? `. ${p.doc}` : ""
+            }`,
       );
     }
     lines.push("");
@@ -113,7 +140,7 @@ export function docMarkdown(doc: FunctionDoc): string {
   if (doc.parameters.length > 0) {
     lines.push("**Parameters** — named, in the trailing `{…}`");
     for (const p of doc.parameters) {
-      lines.push(`- \`${p.name}\` — ${p.type}`);
+      lines.push(`- \`${p.name}\` (${p.type}) — ${p.doc}`);
     }
     lines.push("");
   }
@@ -121,7 +148,7 @@ export function docMarkdown(doc: FunctionDoc): string {
   if (doc.options.length > 0) {
     lines.push("**Options** — named, in the trailing `{…}`");
     for (const o of doc.options) {
-      lines.push(`- \`${o.name}\`: ${o.type}`);
+      lines.push(`- \`${o.name}\` (${o.type}) — ${o.doc}`);
     }
     lines.push("");
   }
@@ -141,11 +168,14 @@ export function documentationFor(builtin: BuiltinSpec): string {
 }
 
 /** Every name with a reference entry: builtins plus the compile-time values. */
-const DOCS_BY_NAME = new Map<string, FunctionDoc>();
+const DOCS_BY_NAME = new Map<string, FunctionDoc[]>();
 
-/** Look up a function's docs by its written name, e.g. `dig`, `drone.rf`, `area`. */
-export function findFunctionDoc(name: string): FunctionDoc | undefined {
-  return DOCS_BY_NAME.get(name);
+/**
+ * Look up a name's docs, e.g. `dig`, `rf`, `area`. Sensors return one entry
+ * per subject — `items(area)` and `items(drone)` are different widgets.
+ */
+export function findFunctionDocs(name: string): readonly FunctionDoc[] {
+  return DOCS_BY_NAME.get(name) ?? [];
 }
 
 export interface SignatureParameter {
@@ -176,7 +206,7 @@ export function signatureLayout(doc: FunctionDoc): SignatureLayout {
       label: [start, cursor],
       documentation: p.ignored
         ? "Nothing reads this slot — whatever is passed is discarded."
-        : `${p.type}${p.required ? ", required" : ", optional"}`,
+        : `${p.type}${p.required ? ", required" : ", optional"}${p.doc ? `. ${p.doc}` : ""}`,
     });
   }
 
@@ -185,10 +215,7 @@ export function signatureLayout(doc: FunctionDoc): SignatureLayout {
     const named = [...doc.parameters, ...doc.options];
     parameters.push({
       label: [options, options + "{options}".length],
-      documentation:
-        named.length > 0
-          ? named.map((o) => `\`${o.name}\`: ${o.type}`).join("\n\n")
-          : "This function takes no named options.",
+      documentation: named.map((o) => `\`${o.name}\` (${o.type}) — ${o.doc}`).join("\n\n"),
     });
   }
 
@@ -205,7 +232,7 @@ export interface Category {
 
 /** Mirrors the comment groups in the compiler's builtins.ts. */
 const ACTION_GROUPS: readonly { title: string; names: readonly string[] }[] = [
-  { title: "Movement", names: ["goto", "teleport", "standby"] },
+  { title: "Movement", names: ["goto", "teleport", "standby", "suicide"] },
   { title: "Blocks", names: ["dig", "place", "harvest", "rightClickBlock", "editSign"] },
   {
     title: "Items",
@@ -247,18 +274,19 @@ export const FUNCTION_CATEGORIES: readonly Category[] = (() => {
     categories.push({ title: group.title, entries });
   }
 
-  const sensors = BUILTINS.filter((b) => b.condition && !claimed.has(b.name));
-  const world = sensors.filter((b) => !b.name.startsWith("drone."));
-  const drone = sensors.filter((b) => b.name.startsWith("drone."));
-  for (const b of sensors) claimed.add(b.name);
+  const world = BUILTINS.filter((b) => b.subject === "area");
+  const drone = BUILTINS.filter((b) => b.subject === "drone");
+  for (const b of [...world, ...drone]) claimed.add(b.name);
   categories.push({
     title: "World sensors",
-    blurb: "Read the world. Use in a condition, or assign to a variable to measure.",
+    blurb:
+      "Measure an area of the world: the area is the first argument. Use in a condition, or assign to a variable.",
     entries: world.map(docFor),
   });
   categories.push({
     title: "Drone sensors",
-    blurb: "Read the drone itself. Use in a condition, or assign to a variable to measure.",
+    blurb:
+      "Measure the drone itself: pass drone as the argument. Use in a condition, or assign to a variable.",
     entries: drone.map(docFor),
   });
 
@@ -274,11 +302,12 @@ export const FUNCTION_CATEGORIES: readonly Category[] = (() => {
 
 // --- Compile-time values -------------------------------------------------------
 
-/** `area()`, `filter()`, `fluid()` and `items()` live in the const-evaluator,
- * not the builtin table, so their docs are written by hand. */
+/** `area()`, `filter()` and `fluid()` live in the const-evaluator, not the
+ * builtin table, so their docs are written by hand. */
 export const PSEUDO_FUNCTIONS: readonly FunctionDoc[] = [
   {
     name: "area",
+    key: "area",
     signature: "area(pos1, pos2?, {options})",
     summary:
       "Define an area from two corner positions — coordinate literals, constants, or variables. With one position, the area is that single block.",
@@ -288,46 +317,53 @@ export const PSEUDO_FUNCTIONS: readonly FunctionDoc[] = [
       { label: "pos2?", type: "coord — omit for a one-block area", required: false },
     ],
     parameters: [],
-    options: [{ name: "shape", type: AREA_TYPES.map((a) => a.id).join(" | ") }],
+    options: [
+      {
+        name: "shape",
+        type: AREA_TYPES.map((a) => a.id).join(" | "),
+        doc: "The solid the two corners describe. Defaults to box; each shape has its own options — see Area shapes below.",
+      },
+    ],
   },
   {
     name: "filter",
+    key: "filter",
     signature: 'filter("mod:item", {options})',
     summary: "Define an item filter. Match a specific item, or widen the match with options.",
     sensor: false,
     positional: [{ label: '"mod:item"', type: "text — an item id", required: false }],
     parameters: [],
     options: [
-      { name: "matchDurability", type: "bool" },
-      { name: "matchComponents", type: "bool" },
-      { name: "matchMod", type: "bool" },
-      { name: "matchBlock", type: "bool" },
-      { name: "var", type: "string" },
+      { name: "matchDurability", type: "bool", doc: "Also require the same damage value." },
+      { name: "matchComponents", type: "bool", doc: "Also require the same NBT / components." },
+      { name: "matchMod", type: "bool", doc: "Match anything from the same mod instead of the one item." },
+      { name: "matchBlock", type: "bool", doc: "Match the placed block rather than the item form." },
+      { name: "var", type: "string", doc: "Take the item from an item variable instead of naming one." },
     ],
   },
   {
     name: "fluid",
+    key: "fluid",
     signature: 'fluid("mod:fluid", {options})',
     summary: "Define a fluid filter.",
     sensor: false,
     positional: [{ label: '"mod:fluid"', type: "text — a fluid id", required: true }],
     parameters: [],
-    options: [{ name: "amount", type: "int — millibuckets, defaults to 1000" }],
-  },
-  {
-    name: "items",
-    signature: "items(filter)",
-    summary:
-      "Iterate the drone's inventory. Only legal as the iterable of a foreach: foreach (item in items(f)) { … }.",
-    sensor: false,
-    positional: [{ label: "filter", type: "item filter", required: true }],
-    parameters: [],
-    options: [],
+    options: [
+      {
+        name: "amount",
+        type: "int",
+        doc: "Millibuckets the filter stands for; defaults to 1000 (one bucket).",
+      },
+    ],
   },
 ];
 
-for (const builtin of BUILTINS) DOCS_BY_NAME.set(builtin.name, docFor(builtin));
-for (const doc of PSEUDO_FUNCTIONS) DOCS_BY_NAME.set(doc.name, doc);
+for (const builtin of BUILTINS) {
+  const doc = docFor(builtin);
+  DOCS_BY_NAME.set(doc.name, [...(DOCS_BY_NAME.get(doc.name) ?? []), doc]);
+}
+for (const doc of PSEUDO_FUNCTIONS) DOCS_BY_NAME.set(doc.name, [doc]);
 
 export interface AreaShapeDoc {
   readonly id: string;
@@ -409,11 +445,13 @@ server int %beacon = 0;  // everyone, server-wide`,
     entries: [
       {
         title: "Branching & loops",
-        body: "if / else, while, for (init; cond; step), and foreach over an area or the drone's items. break and continue work in while and for; break is rejected inside foreach. halt is the suicide widget.",
+        body: "if / else, while, for (init; cond; step), and foreach over an area or the drone's items. break and continue work in while and for; break is rejected inside foreach. suicide() ends the program by destroying the drone.",
         code: `foreach (spot in quarry) { dig(spot); }
-foreach (item in items(ores)) { dropItems(porch, {only: item}); }
-while (drone.pressure() >= 2) { … }
-halt;`,
+foreach (it in items(drone, {only: ores})) {
+  dropItems(porch, {only: filter({var: "it"})});
+}
+while (pressure(drone) >= 2) { … }
+suicide();`,
       },
       {
         title: "Functions",
@@ -424,9 +462,9 @@ halt;`,
       },
       {
         title: "Conditions",
-        body: "There are no boolean values, only branching: a condition may only appear in if, while or for. A bare sensor call means “reads at least 1”. && and || cost no extra widgets. The game only offers =, >= and <=; the compiler rewrites >, < and != for free by swapping branch targets. Assign a sensor to a variable to measure it instead of branching.",
-        code: `if (itemsIn(chest, {only: ores}) >= 64 && drone.rf() > 0) { … }
-int level = lightAt(porch);   // measure, not branch`,
+        body: "There are no boolean values, only branching: a condition may only appear in if, while or for. A sensor's first argument is its subject — an area of the world, or the drone itself: pressure(machines) vs pressure(drone). A bare sensor call means “reads at least 1”. && and || cost no extra widgets. The game only offers =, >= and <=; the compiler rewrites >, < and != for free by swapping branch targets. Assign a sensor to a variable to measure it instead of branching.",
+        code: `if (items(chest, {only: ores}) >= 64 && rf(drone) > 0) { … }
+int level = light(porch);   // measure, not branch`,
       },
       {
         title: "Operators",

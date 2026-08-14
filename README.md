@@ -29,14 +29,14 @@ void unload() {
 }
 
 while (true) {
-  if (drone.pressure() <= 1) {
+  if (pressure(drone) <= 1) {
     unload();
-    halt;
+    suicide();
   }
 
   dig(pit, {except: junk, order: "highToLow"});
 
-  if (drone.items() >= 64) {
+  if (items(drone) >= 64) {
     unload();
   }
 
@@ -72,8 +72,9 @@ drones, `%name` is shared server-wide, and `$name` is one the game provides:
 `$drone_pos`, `$controller_pos`, `$owner_pos`, `$deploy_pos`, `$owner_look`.
 
 **Control flow.** `if` / `else`, `while`, `for`, `break`, `continue`, `return`,
-and `halt` (which is the suicide widget). `foreach (spot in someArea)` compiles
-to the game's own iteration widget, as does `foreach (item in items(filter))`.
+and `suicide()` (the drone destroys itself). `foreach (spot in someArea)`
+compiles to the game's own iteration widget, as does
+`foreach (item in items(drone, {only: filter}))`.
 
 **Functions.** Declared `void` or `int`, called by name. They compile to a label
 and a jump-sub widget. A drone has no call stack for arguments, so each function
@@ -82,12 +83,12 @@ rejected**: the game's jump-back mechanism cannot express it, and the compiler
 reports the cycle rather than emitting something that misbehaves in world.
 
 **Conditions.** There are no boolean values, only branching, so a condition may
-only appear in `if`, `while` or `for`. Sensors read the world
-(`itemsIn`, `blocksIn`, `redstoneAt`, `lightAt`, `pressureAt`, `rfAt`,
-`entitiesIn`, `liquidIn`) or the drone itself (`drone.pressure()`,
-`drone.items()`, `drone.rf()`, `drone.liquid()`, `drone.entities()`,
-`drone.upgrades()`). Assign a sensor to a variable to measure it instead of
-branching on it.
+only appear in `if`, `while` or `for`. A sensor's first argument is what it
+measures — an area of the world, or the drone itself: `items(chest)` counts a
+chest, `items(drone)` counts the drone's own cargo. The sensors are `items`,
+`liquid`, `entities`, `pressure`, `rf` (both subjects), `blocks`, `redstone`,
+`light` (areas only) and `upgrades` (drone only). Assign a sensor to a variable
+to measure it instead of branching on it.
 
 The game only offers `=`, `>=` and `<=`; the compiler rewrites `>`, `<` and `!=`
 into those by swapping the branch targets, which costs nothing.
