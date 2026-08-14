@@ -146,12 +146,14 @@ npm run build   # static site into packages/web/dist
 - `examples/` — programs that double as integration tests, with their piece
   counts pinned so an optimisation win or regression shows up in the diff.
 
-## Asset credits
+## License
+
+[GNU General Public License v3.0](LICENSE).
 
 The puzzle-piece textures in
 [`packages/web/src/assets/progwidgets/`](packages/web/src/assets/progwidgets/)
 are from
 [PneumaticCraft: Repressurized](https://github.com/TeamPneumatic/pnc-repressurized)
-by TeamPneumatic, licensed under the GNU General Public License v3.0. See
+by TeamPneumatic, itself GPLv3 — which is why this project is too. See
 [NOTICE.md](packages/web/src/assets/progwidgets/NOTICE.md) there for the exact
 provenance.
