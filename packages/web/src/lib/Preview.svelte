@@ -103,6 +103,9 @@
     readonly y: number;
     readonly w: number;
     readonly h: number;
+    /** The art's real footprint — body plus protruding tabs — for hit-testing. */
+    readonly hw: number;
+    readonly hh: number;
     readonly texture: string | undefined;
     readonly textureSize: number;
     readonly label: string;
@@ -113,12 +116,18 @@
   const boxes = $derived.by((): Box[] =>
     placed.map((widget, index) => {
       const spec = getWidget(widget.type);
+      const w = widgetWidth(spec) * SCALE;
+      const h = widgetHeight(spec) * SCALE;
       return {
         index,
         x: widget.x * SCALE,
         y: widget.y * SCALE,
-        w: widgetWidth(spec) * SCALE,
-        h: widgetHeight(spec) * SCALE,
+        w,
+        h,
+        // The tab allowances from the mod's art: +10 GUI px (5 units) on the
+        // right when there are parameter rows, and below for a step output.
+        hw: w + (spec.params.length > 0 ? 5 * SCALE : 0),
+        hh: h + (spec.hasStepOutput ? 5 * SCALE : 0),
         texture: textureFor(widget),
         textureSize: textureUnits(spec) * SCALE,
         label: widget.type,
@@ -390,8 +399,8 @@
                   <rect
                     x={box.x}
                     y={box.y}
-                    width={box.w}
-                    height={box.h}
+                    width={box.hw}
+                    height={box.hh}
                     class="hit"
                     class:hovered={hovered === index && !drag}
                     class:invalid
@@ -497,9 +506,12 @@
     font-size: 12px;
   }
 
-  /* The game's textures are pixel art; let them stay that way at any zoom. */
+  /* The game's textures are pixel art; let them stay that way at any zoom.
+     The file is mostly transparent power-of-two padding, so the art must not
+     take pointer events — the .hit rect is the piece's one true hitbox. */
   .piece {
     image-rendering: pixelated;
+    pointer-events: none;
   }
 
   .lifted {
@@ -542,6 +554,7 @@
   .widget {
     stroke: var(--mc-15);
     stroke-width: 2;
+    pointer-events: none;
   }
 
   .lit,
