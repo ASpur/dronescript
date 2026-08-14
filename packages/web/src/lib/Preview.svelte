@@ -341,6 +341,25 @@
           >
             <path d="M0,0 L8,4 L0,8 z" fill="var(--fg-muted)" />
           </marker>
+
+          <!-- Pixel-true outlines: dilate the art's alpha by one texel (2px at
+               SCALE 4) and paint the grown silhouette behind the source, so
+               the highlight hugs every tab and notch instead of a box. -->
+          <filter id="px-hover" x="-10%" y="-10%" width="120%" height="120%">
+            <feMorphology in="SourceAlpha" operator="dilate" radius="2" result="grown" />
+            <feFlood class="hover-flood" result="color" />
+            <feComposite in="color" in2="grown" operator="in" result="outline" />
+            <feComposite in="SourceGraphic" in2="outline" operator="over" />
+          </filter>
+          <filter id="px-invalid" x="-10%" y="-10%" width="120%" height="120%">
+            <feMorphology in="SourceAlpha" operator="dilate" radius="2" result="grown" />
+            <feFlood class="invalid-flood" result="color" />
+            <feComposite in="color" in2="grown" operator="in" result="outline" />
+            <feComposite in="SourceGraphic" in2="outline" operator="over" result="outlined" />
+            <feFlood flood-color="rgb(255 0 0 / 0.3)" result="wash" />
+            <feComposite in="wash" in2="SourceAlpha" operator="in" result="washed" />
+            <feComposite in="washed" in2="outlined" operator="over" />
+          </filter>
         </defs>
 
         <g transform={`translate(${tx} ${ty}) scale(${zoom})`}>
@@ -377,6 +396,8 @@
                       height={box.textureSize}
                       preserveAspectRatio="xMinYMin"
                       class="piece"
+                      class:hovered={hovered === index && !drag}
+                      class:invalid
                     />
                   {:else}
                     <rect
@@ -402,8 +423,8 @@
                     width={box.hw}
                     height={box.hh}
                     class="hit"
-                    class:hovered={hovered === index && !drag}
-                    class:invalid
+                    class:hovered={!box.texture && hovered === index && !drag}
+                    class:invalid={!box.texture && invalid}
                   />
                 </g>
               {/each}
@@ -512,6 +533,22 @@
   .piece {
     image-rendering: pixelated;
     pointer-events: none;
+  }
+
+  .piece.hovered {
+    filter: url(#px-hover);
+  }
+
+  .piece.invalid {
+    filter: url(#px-invalid);
+  }
+
+  .hover-flood {
+    flood-color: var(--glow);
+  }
+
+  .invalid-flood {
+    flood-color: var(--bad);
   }
 
   .lifted {
