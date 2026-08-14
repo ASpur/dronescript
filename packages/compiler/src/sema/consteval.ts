@@ -4,9 +4,10 @@
  * parameter widgets.
  */
 
-import type { Call, Expr, ObjectLiteral } from "../ast.js";
+import type { Call, Expr, ListLiteral, ObjectLiteral } from "../ast.js";
 import type { DiagnosticBag } from "../diagnostics.js";
 import { AREA_TYPES, getAreaType } from "../spec/widgets.js";
+import { area as areaNode } from "../emit/model.js";
 import type { WidgetNode } from "../emit/model.js";
 import type { CompileValue } from "./values.js";
 
@@ -59,9 +60,44 @@ export class ConstEvaluator {
       }
       case "call":
         return this.evalCall(expr);
+      case "list":
+        return this.evalList(expr);
       default:
         return undefined;
     }
+  }
+
+  /**
+   * A list folds into one union: the members' chains concatenated in order.
+   * The game reads a chain of parameter widgets on one row as a union, so a
+   * list-valued const is exactly "an array of areas/points". Bare coordinates
+   * become one-block areas, the same as everywhere else. Anything mixed or
+   * non-constant returns undefined WITHOUT a diagnostic — lists also appear
+   * where they are not constants at all (e.g. {sides: ["up"]}), and the
+   * caller owns that error.
+   */
+  private evalList(expr: ListLiteral): CompileValue | undefined {
+    const chain: WidgetNode[] = [];
+    let kind: "area" | "itemFilter" | "liquidFilter" | undefined;
+    for (const item of expr.items) {
+      const value = this.eval(item);
+      const resolved =
+        value?.kind === "coord"
+          ? { kind: "area" as const, chain: [areaNode(value.value)] }
+          : value;
+      if (
+        resolved === undefined ||
+        (resolved.kind !== "area" &&
+          resolved.kind !== "itemFilter" &&
+          resolved.kind !== "liquidFilter")
+      ) {
+        return undefined;
+      }
+      if (kind === undefined) kind = resolved.kind;
+      if (resolved.kind !== kind) return undefined;
+      chain.push(...resolved.chain);
+    }
+    return kind === undefined ? undefined : { kind, chain };
   }
 
   evalInt(expr: Expr): number | undefined {

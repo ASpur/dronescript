@@ -418,8 +418,10 @@ int col = above.x;`,
       },
       {
         title: "Lists & options",
-        body: "[a, b] chains areas or filters wherever one is accepted. The trailing {name: value} object supplies a function's named options; names may be bare or quoted.",
-        code: `dig(mine, {only: [filter("minecraft:stone"), filter("minecraft:deepslate")],
+        body: "[a, b] chains areas or filters wherever one is accepted, and a const can hold one — bare coordinates in a list become one-block areas, so a list of points is an area you can foreach over. The trailing {name: value} object supplies a function's named options; names may be bare or quoted.",
+        code: `const fuelSpots = [<100, 100, 100>, <100, 101, 100>];
+foreach (b in fuelSpots) { goto(b); }
+dig(mine, {only: [filter("minecraft:stone"), filter("minecraft:deepslate")],
            order: "closest", maxActions: 8});`,
       },
     ],

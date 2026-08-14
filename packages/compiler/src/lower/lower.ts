@@ -189,7 +189,7 @@ export class Lowerer {
         if (value === undefined) {
           this.diagnostics.error(
             "not-constant",
-            `"${stmt.name}" must be a compile-time constant (a number, string, area, or filter)`,
+            `"${stmt.name}" must be a compile-time constant (a number, string, coordinate, area, filter, or a list of areas or filters)`,
             stmt.span,
           );
           return;

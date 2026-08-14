@@ -102,6 +102,64 @@ describe("straight-line programs", () => {
   });
 });
 
+describe("list constants", () => {
+  it("lets foreach walk a const list of points as one union", () => {
+    const result = okV3(`
+      const fuelSpots = [<100, 100, 100>, <100, 101, 100>];
+      foreach (b in fuelSpots) {
+        goto(b);
+      }
+    `);
+    // The chain of areas on the for-each row is the union the game iterates.
+    const areas = v3Widgets(result).filter((w) => w["type"] === "pneumaticcraft:area");
+    const positions = areas.map((a) => a["pos1"]);
+    expect(positions).toContainEqual([100, 100, 100]);
+    expect(positions).toContainEqual([100, 101, 100]);
+
+    const loop = result.placed!.find((p) => p.type === "for_each_coordinate")!;
+    const chained = result.placed!.filter(
+      (p) => p.type === "area" && p.y === loop.y && p.x > loop.x,
+    );
+    expect(chained).toHaveLength(2);
+  });
+
+  it("mixes coordinates and area constants in one list", () => {
+    const result = ok(`
+      const pit = area(<0, 60, 0>, <4, 64, 4>);
+      const stops = [pit, <9, 64, 9>];
+      goto(stops);
+    `);
+    expect(types(result).filter((t) => t === "area")).toHaveLength(2);
+  });
+
+  it("re-emits a list constant at each use site", () => {
+    const result = ok(`
+      const spots = [<1, 64, 1>, <2, 64, 2>];
+      goto(spots);
+      goto(spots);
+    `);
+    expect(types(result).filter((t) => t === "area")).toHaveLength(4);
+  });
+
+  it("folds a const list of filters into one filter chain", () => {
+    const result = ok(`
+      const junk = [filter("minecraft:cobblestone"), filter("minecraft:dirt")];
+      dig(area(<0, 0, 0>, <4, 4, 4>), {except: junk});
+    `);
+    const dig = result.placed!.find((p) => p.type === "dig")!;
+    const blacklisted = result.placed!.filter((p) => p.type === "item_filter" && p.x < dig.x);
+    expect(blacklisted).toHaveLength(2);
+  });
+
+  it("rejects a mixed list as not constant", () => {
+    expect(errors(`const bad = [1, <1, 2, 3>];`)).toContain("not-constant");
+  });
+
+  it("rejects a list naming a runtime variable as not constant", () => {
+    expect(errors(`coord c; const bad = [c];`)).toContain("not-constant");
+  });
+});
+
 describe("arithmetic", () => {
   it("folds a whole additive chain into one widget", () => {
     const result = ok(`
