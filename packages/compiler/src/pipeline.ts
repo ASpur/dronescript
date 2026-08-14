@@ -10,7 +10,7 @@ import type { PlacedWidget, Program } from "./emit/model.js";
 import { DEFAULT_TARGET } from "./spec/targets.js";
 import type { Target } from "./spec/targets.js";
 import { layout } from "./layout/place.js";
-import type { LayoutOptions } from "./layout/place.js";
+import type { IntentNode, LayoutOptions } from "./layout/place.js";
 import { verify } from "./verify/graphcheck.js";
 import type { VerifyIssue } from "./verify/graphcheck.js";
 
@@ -19,6 +19,8 @@ export interface BuildResult {
   readonly json: ProgramJson | Record<string, unknown>;
   readonly text: string;
   readonly placed: readonly PlacedWidget[];
+  /** What layout meant to connect — lets callers re-verify a moved layout. */
+  readonly intent: readonly IntentNode[];
   readonly issues: readonly VerifyIssue[];
   /** Programming Puzzle pieces the program will cost to load onto a drone. */
   readonly pieces: number;
@@ -63,6 +65,7 @@ export function build(program: Program, options: BuildOptions = {}): BuildResult
     json: encoded.json,
     text: encoded.text,
     placed,
+    intent,
     issues,
     pieces: puzzlePieceCount(placed),
     target,

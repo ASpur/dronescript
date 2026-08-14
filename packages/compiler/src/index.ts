@@ -6,6 +6,7 @@ export * from "./emit/model.js";
 export * from "./emit/emit.js";
 export * from "./layout/geometry.js";
 export * from "./layout/place.js";
+export * from "./layout/offsets.js";
 export * from "./verify/relink.js";
 export * from "./verify/graphcheck.js";
 export * from "./pipeline.js";

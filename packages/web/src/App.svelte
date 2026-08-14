@@ -31,6 +31,98 @@
   let editor: Editor | undefined = $state();
   let target: Target = $state(DEFAULT_TARGET);
 
+  // ------------------------------------------------------------------
+  // Side panel: resizable via the splitter, collapsible to a rail, both
+  // remembered across visits. Under 900px the stacked layout takes over.
+  // ------------------------------------------------------------------
+  const PANEL_MIN = 320;
+  const EDITOR_MIN = 360;
+  const SPLITTER = 6;
+  const RAIL = 30;
+
+  function storedPanelWidth(): number {
+    const stored = Number(localStorage.getItem("ds.panel.width"));
+    return Number.isFinite(stored) && stored >= PANEL_MIN
+      ? stored
+      : Math.round(window.innerWidth / 2);
+  }
+
+  let panelWidth = $state(storedPanelWidth());
+  let collapsed = $state(localStorage.getItem("ds.panel.collapsed") === "1");
+  let splitting = $state(false);
+  let mainEl: HTMLElement | undefined = $state();
+
+  const narrowQuery = window.matchMedia("(max-width: 900px)");
+  let narrow = $state(narrowQuery.matches);
+  narrowQuery.addEventListener("change", (e) => (narrow = e.matches));
+
+  function clampPanel(width: number): number {
+    const room = (mainEl?.clientWidth ?? window.innerWidth) - EDITOR_MIN - SPLITTER;
+    return Math.round(Math.min(Math.max(width, PANEL_MIN), Math.max(PANEL_MIN, room)));
+  }
+
+  // Inline style beats the stylesheet, so it is only set in the wide layout;
+  // when narrow, the 900px media query's stacked rows stay in charge.
+  const mainStyle = $derived(
+    narrow
+      ? collapsed
+        ? "grid-template-rows: minmax(0, 1fr) auto;"
+        : ""
+      : `grid-template-columns: minmax(0, 1fr) ${
+          collapsed ? `0px ${RAIL}px` : `${SPLITTER}px ${clampPanel(panelWidth)}px`
+        };`,
+  );
+
+  function startSplit(event: PointerEvent): void {
+    if (event.button !== 0) return;
+    splitting = true;
+    try {
+      (event.currentTarget as Element).setPointerCapture(event.pointerId);
+    } catch {
+      // Synthetic events have no active pointer to capture.
+    }
+  }
+
+  function moveSplit(event: PointerEvent): void {
+    if (!splitting || !mainEl) return;
+    panelWidth = clampPanel(mainEl.getBoundingClientRect().right - event.clientX - SPLITTER / 2);
+  }
+
+  function endSplit(): void {
+    if (!splitting) return;
+    splitting = false;
+    localStorage.setItem("ds.panel.width", String(panelWidth));
+  }
+
+  function resetSplit(): void {
+    panelWidth = clampPanel(Math.round((mainEl?.clientWidth ?? window.innerWidth) / 2));
+    localStorage.setItem("ds.panel.width", String(panelWidth));
+  }
+
+  function toggleCollapsed(): void {
+    collapsed = !collapsed;
+    localStorage.setItem("ds.panel.collapsed", collapsed ? "1" : "0");
+  }
+
+  // ------------------------------------------------------------------
+  // Chain offsets: the user's drags, keyed by chain signature. Session-only
+  // on purpose — persisted offsets could silently reshape a future program
+  // that happens to produce a chain with the same signature.
+  // ------------------------------------------------------------------
+  let chainOffsets: Record<string, { dx: number; dy: number }> = $state({});
+  const hasOffsets = $derived(Object.keys(chainOffsets).length > 0);
+
+  function moveChain(key: string, dx: number, dy: number): void {
+    const prior = chainOffsets[key];
+    chainOffsets[key] = { dx: (prior?.dx ?? 0) + dx, dy: (prior?.dy ?? 0) + dy };
+    requestCompile(source);
+  }
+
+  function resetLayout(): void {
+    chainOffsets = {};
+    requestCompile(source);
+  }
+
   const worker = new CompileWorker();
   let pending = 0;
   let latest = 0;
@@ -40,10 +132,26 @@
     if (event.data.id < latest) return;
     latest = event.data.id;
     result = event.data.result;
+    // Drop offsets for chains that no longer exist, so a stale drag cannot
+    // grab an unrelated chain that later reuses the signature. Only the reply
+    // to the newest request may prune — an older reply predates offsets that
+    // were added while it was in flight.
+    if (event.data.applied && event.data.id === pending && hasOffsets) {
+      const keep = new Set(event.data.applied);
+      for (const key of Object.keys(chainOffsets)) {
+        if (!keep.has(key)) delete chainOffsets[key];
+      }
+    }
   };
 
   function requestCompile(next: string): void {
-    const message: CompileRequest = { id: ++pending, source: next, target };
+    const message: CompileRequest = {
+      id: ++pending,
+      source: next,
+      target,
+      // Snapshot: a $state proxy cannot survive structured clone.
+      offsets: hasOffsets ? $state.snapshot(chainOffsets) : undefined,
+    };
     worker.postMessage(message);
   }
 
@@ -111,7 +219,7 @@
     </div>
   </header>
 
-  <main>
+  <main bind:this={mainEl} style={mainStyle} class:splitting>
     <section class="pane editor-pane">
       <div class="pane-head">
         <span class="eyebrow">Source</span>
@@ -124,32 +232,71 @@
       />
     </section>
 
-    <section class="pane output-pane">
-      <nav class="pane-head tabs">
-        <button class:active={tab === "preview"} onclick={() => (tab = "preview")}>
-          Puzzle layout
-        </button>
-        <button class:active={tab === "json"} onclick={() => (tab = "json")}>JSON</button>
-        <button class:active={tab === "reference"} onclick={() => (tab = "reference")}>
-          Reference
-        </button>
-        <span class="spacer"></span>
-        {#if tab === "reference"}
-          <button class="expand" onclick={() => (referenceExpanded = true)}>Expand</button>
-        {:else if result?.pieces !== undefined && errors.length === 0}
-          <span class="pieces">{result.pieces} pieces</span>
-        {/if}
-      </nav>
+    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+    <div
+      class="splitter"
+      class:hidden={collapsed}
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize the output panel"
+      onpointerdown={startSplit}
+      onpointermove={moveSplit}
+      onpointerup={endSplit}
+      onpointercancel={endSplit}
+      ondblclick={resetSplit}
+    ></div>
 
-      <div class="output">
-        {#if tab === "preview"}
-          <Preview placed={result?.placed ?? []} />
-        {:else if tab === "reference"}
-          <Reference bind:this={reference} />
-        {:else}
-          <pre class="json">{result?.text ? formatJson(result.text) : ""}</pre>
-        {/if}
-      </div>
+    <section class="pane output-pane" class:collapsed>
+      {#if collapsed}
+        <button
+          class="rail"
+          onclick={toggleCollapsed}
+          title="Expand the output panel"
+          aria-label="Expand the output panel"
+        >
+          {narrow ? "▴" : "◂"}
+        </button>
+      {:else}
+        <nav class="pane-head tabs">
+          <button class:active={tab === "preview"} onclick={() => (tab = "preview")}>
+            Puzzle layout
+          </button>
+          <button class:active={tab === "json"} onclick={() => (tab = "json")}>JSON</button>
+          <button class:active={tab === "reference"} onclick={() => (tab = "reference")}>
+            Reference
+          </button>
+          <span class="spacer"></span>
+          {#if tab === "reference"}
+            <button class="expand" onclick={() => (referenceExpanded = true)}>Expand</button>
+          {:else if result?.pieces !== undefined && errors.length === 0}
+            <span class="pieces">{result.pieces} pieces</span>
+          {/if}
+          <button
+            class="collapse"
+            onclick={toggleCollapsed}
+            title="Collapse the output panel"
+            aria-label="Collapse the output panel"
+          >
+            {narrow ? "▾" : "▸"}
+          </button>
+        </nav>
+
+        <div class="output">
+          {#if tab === "preview"}
+            <Preview
+              placed={result?.placed ?? []}
+              intent={result?.intent ?? []}
+              {hasOffsets}
+              onMoveChain={moveChain}
+              onResetLayout={resetLayout}
+            />
+          {:else if tab === "reference"}
+            <Reference bind:this={reference} />
+          {:else}
+            <pre class="json">{result?.text ? formatJson(result.text) : ""}</pre>
+          {/if}
+        </div>
+      {/if}
     </section>
   </main>
 
@@ -264,13 +411,81 @@
     flex: 1;
     min-height: 0;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) 6px minmax(0, 1fr);
+  }
+
+  /* A live splitter drag must not select text or fight the iframe-ish panes. */
+  main.splitting {
+    user-select: none;
+    cursor: col-resize;
+  }
+
+  .splitter {
+    cursor: col-resize;
+    background: var(--surface);
+    border-left: 1px solid var(--line);
+    touch-action: none;
+  }
+
+  .splitter:hover,
+  main.splitting .splitter {
+    background: var(--line-strong);
+  }
+
+  .splitter.hidden {
+    display: none;
+  }
+
+  .output-pane.collapsed {
+    overflow: hidden;
+  }
+
+  /* The collapsed panel is nothing but this strip. */
+  .rail {
+    flex: 1;
+    border: none;
+    border-radius: 0;
+    background: var(--surface);
+    color: var(--fg-muted);
+    font-size: 12px;
+  }
+
+  .rail:hover {
+    color: var(--fg);
+    background: var(--surface-raised);
+  }
+
+  .collapse {
+    height: 22px;
+    padding: 0 6px;
+    font-size: 11px;
+    color: var(--fg-muted);
+    background: transparent;
+    border-color: transparent;
+  }
+
+  .collapse:hover {
+    color: var(--fg);
+    border-color: var(--line-strong);
   }
 
   @media (max-width: 900px) {
     main {
       grid-template-columns: 1fr;
       grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+    }
+
+    .splitter {
+      display: none;
+    }
+
+    /* Stacked layout: collapsing leaves just the rail as a bottom strip. */
+    .output-pane.collapsed {
+      min-height: 30px;
+    }
+
+    .rail {
+      min-height: 30px;
     }
   }
 
